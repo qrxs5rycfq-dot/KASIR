@@ -394,29 +394,30 @@ def init_db():
         
         for cat_name, cat_desc, cat_icon, cat_order in categories_data:
             if not Category.query.filter_by(name=cat_name).first():
-                cat = Category(name=cat_name, description=cat_desc, icon=cat_icon, order=cat_order)
+                cat = Category(name=cat_name, description=cat_desc, icon=cat_icon, order=cat_order, branch_id=default_branch.id)
                 db.session.add(cat)
         
         db.session.commit()
         
         # Create menu items from PDF menu (Solaria style)
-        seed_menu_items()
+        seed_menu_items(default_branch.id)
         
         # Create default tables
         for i in range(1, 21):
             table_num = f"{i:02d}"
-            if not Table.query.filter_by(number=table_num).first():
+            if not Table.query.filter_by(number=table_num, branch_id=default_branch.id).first():
                 table = Table(
                     number=table_num,
                     name=f"Meja {i}",
-                    capacity=4 if i <= 15 else 6
+                    capacity=4 if i <= 15 else 6,
+                    branch_id=default_branch.id
                 )
                 db.session.add(table)
         
         db.session.commit()
         print("Database initialized successfully!")
 
-def seed_menu_items():
+def seed_menu_items(branch_id=None):
     """Seed menu items from Solaria menu PDF"""
     
     # Get categories
@@ -510,7 +511,8 @@ def seed_menu_items():
                 has_temperature_option=item_data.get('has_temp', False),
                 is_popular=item_data.get('popular', False),
                 image=item_data.get('image', ''),
-                description=f"Menu {item_data['name']} yang lezat"
+                description=f"Menu {item_data['name']} yang lezat",
+                branch_id=branch_id
             )
             db.session.add(menu_item)
         else:
@@ -1444,7 +1446,7 @@ def admin_create_user():
         username=username,
         email=email,
         full_name=full_name,
-        branch_id=request.form.get('branch_id') or get_user_branch_id()
+        branch_id=int(request.form.get('branch_id')) if request.form.get('branch_id') else get_user_branch_id()
     )
     user.set_password(password)
     

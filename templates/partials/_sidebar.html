@@ -15,9 +15,23 @@
         </button>
         
         <!-- Logo -->
-        <div class="flex items-center space-x-3 mb-8">
+        <div class="flex items-center space-x-3 mb-4">
             <img src="{{ url_for('static', filename='logo.png') }}" alt="Dapoer Teras Obor" class="w-10 h-10 rounded-xl object-contain">
             <span class="text-xl font-display font-bold gradient-text">Dapoer Teras Obor</span>
+        </div>
+        
+        <!-- Current Branch Indicator -->
+        <div class="mb-6 px-3 py-2 rounded-xl bg-white/5 border border-white/10">
+            <div class="flex items-center space-x-2">
+                <i class="fas fa-store text-primary-400 text-sm"></i>
+                {% if is_owner %}
+                    <span class="text-xs text-primary-400 font-medium">Semua Cabang (Owner)</span>
+                {% elif current_branch %}
+                    <span class="text-xs text-gray-300 font-medium">{{ current_branch.name }}</span>
+                {% else %}
+                    <span class="text-xs text-gray-400">Cabang tidak diset</span>
+                {% endif %}
+            </div>
         </div>
         
         <!-- Navigation -->

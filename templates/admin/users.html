@@ -34,6 +34,7 @@
                         <th class="text-left p-4 text-sm font-medium text-gray-400">User</th>
                         <th class="text-left p-4 text-sm font-medium text-gray-400">Email</th>
                         <th class="text-left p-4 text-sm font-medium text-gray-400">Role</th>
+                        <th class="text-left p-4 text-sm font-medium text-gray-400">Cabang</th>
                         <th class="text-left p-4 text-sm font-medium text-gray-400">Status</th>
                         <th class="text-left p-4 text-sm font-medium text-gray-400">Aksi</th>
                     </tr>
@@ -59,6 +60,13 @@
                                 {{ role.name|title }}
                             </span>
                             {% endfor %}
+                        </td>
+                        <td class="p-4 text-sm text-gray-300">
+                            {% if user.branch %}
+                                <span class="px-2 py-1 rounded-full bg-white/10 text-gray-300 text-xs">{{ user.branch.name }}</span>
+                            {% else %}
+                                <span class="px-2 py-1 rounded-full bg-yellow-500/20 text-yellow-400 text-xs">Semua Cabang</span>
+                            {% endif %}
                         </td>
                         <td class="p-4">
                             <span class="px-3 py-1 rounded-full text-xs font-medium
@@ -109,6 +117,17 @@
                 <select name="role_id" required class="w-full bg-white/5 border border-white/10 rounded-xl py-2.5 px-4 text-white">
                     {% for role in roles %}
                     <option value="{{ role.id }}">{{ role.name|title }}</option>
+                    {% endfor %}
+                </select>
+            </div>
+            <div>
+                <label class="text-sm text-gray-400 mb-1 block">Cabang</label>
+                <select name="branch_id" class="w-full bg-white/5 border border-white/10 rounded-xl py-2.5 px-4 text-white">
+                    {% if is_owner %}
+                    <option value="">Semua Cabang (Owner)</option>
+                    {% endif %}
+                    {% for branch in all_branches %}
+                    <option value="{{ branch.id }}" {% if current_branch and branch.id == current_branch.id %}selected{% endif %}>{{ branch.name }} ({{ branch.code }})</option>
                     {% endfor %}
                 </select>
             </div>
