@@ -687,12 +687,19 @@ def dashboard():
         else:
             table.status = 'available'
     
+    # Low stock items (stock <= 10)
+    low_stock_items = MenuItem.query.filter(
+        MenuItem.is_available == True,
+        MenuItem.stock <= 10
+    ).order_by(MenuItem.stock.asc()).all()
+    
     return render_template('dashboard.html',
                          total_income_today=total_income_today,
                          total_orders_today=total_orders_today,
                          popular_items=popular_items,
                          recent_orders=recent_orders,
                          tables=tables,
+                         low_stock_items=low_stock_items,
                          now=datetime.now())
 
 # POS (Kasir)
