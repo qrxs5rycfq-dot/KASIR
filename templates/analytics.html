@@ -226,7 +226,7 @@
             <!-- Hourly Distribution -->
             <div class="glass-card rounded-2xl p-6">
                 <h3 class="text-lg font-semibold mb-2">Distribusi Jam Ramai (Minggu Ini)</h3>
-                <p class="text-sm text-gray-400 mb-4">Jam paling ramai: <span class="text-primary-400 font-bold">{{ '%02d:00'|format(peak_hour) }}</span></p>
+                <p class="text-sm text-gray-400 mb-4">Jam paling ramai: <span class="text-primary-400 font-bold">{{ '%02d:00' % peak_hour }}</span></p>
                 <canvas id="hourlyChart" height="200"></canvas>
             </div>
         </div>

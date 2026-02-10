@@ -2925,7 +2925,7 @@ def analytics():
     avg_growth = growth_pct(today_avg, yesterday_avg)
     
     today_cancelled = len([o for o in today_orders if o.status == 'cancelled'])
-    today_cancel_rate = round((today_cancelled / len(today_orders) * 100), 1) if today_orders else 0
+    today_cancel_rate = round(today_cancelled / len(today_orders) * 100, 1) if today_orders else 0
     
     # ── This Week vs Last Week ──
     this_week_orders = branch_filter(Order.query, Order).filter(
@@ -3000,10 +3000,11 @@ def analytics():
         type_breakdown[otype]['count'] += 1
         type_breakdown[otype]['total'] += o.total
     
+    total_type_count = sum(v['count'] for v in type_breakdown.values())
     for otype in type_breakdown:
         type_breakdown[otype]['percentage'] = round(
-            (type_breakdown[otype]['count'] / total_source_count * 100), 1
-        ) if total_source_count > 0 else 0
+            type_breakdown[otype]['count'] / total_type_count * 100, 1
+        ) if total_type_count > 0 else 0
     
     # ── Category Performance (this month) ──
     category_perf = {}
