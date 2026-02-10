@@ -562,6 +562,48 @@ class CashierShift(db.Model):
         return f'<CashierShift {self.id} - {self.status}>'
 
 
+class Expense(db.Model):
+    """Expense tracking for restaurant operations"""
+    __tablename__ = 'expenses'
+    
+    id = db.Column(db.Integer, primary_key=True)
+    date = db.Column(db.Date, nullable=False, default=lambda: utc_now().date())
+    category = db.Column(db.String(50), nullable=False)  # ingredients, utilities, salary, supplies, maintenance, other
+    description = db.Column(db.String(255), nullable=False)
+    amount = db.Column(db.Integer, nullable=False)
+    notes = db.Column(db.Text)
+    user_id = db.Column(db.Integer, db.ForeignKey('users.id'), nullable=True)
+    created_at = db.Column(db.DateTime, default=utc_now)
+    updated_at = db.Column(db.DateTime, default=utc_now, onupdate=utc_now)
+    
+    user = db.relationship('User', backref=db.backref('expenses', lazy='dynamic'))
+    
+    CATEGORIES = {
+        'ingredients': 'Bahan Baku',
+        'utilities': 'Utilitas (Listrik/Air/Gas)',
+        'salary': 'Gaji Karyawan',
+        'supplies': 'Perlengkapan',
+        'maintenance': 'Perawatan',
+        'other': 'Lainnya'
+    }
+    
+    def to_dict(self):
+        return {
+            'id': self.id,
+            'date': self.date.isoformat() if self.date else None,
+            'category': self.category,
+            'category_label': self.CATEGORIES.get(self.category, self.category),
+            'description': self.description,
+            'amount': self.amount,
+            'notes': self.notes,
+            'user_name': (self.user.full_name or self.user.username) if self.user else None,
+            'created_at': self.created_at.isoformat() if self.created_at else None
+        }
+    
+    def __repr__(self):
+        return f'<Expense {self.id} - {self.category} - {self.amount}>'
+
+
 class Notification(db.Model):
     """Notification model for real-time alerts"""
     __tablename__ = 'notifications'

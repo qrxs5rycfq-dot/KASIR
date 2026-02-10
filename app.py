@@ -19,7 +19,7 @@ from flask_limiter.util import get_remote_address
 from werkzeug.utils import secure_filename
 
 from config import config
-from models import db, User, Role, Permission, Category, MenuItem, Table, Order, OrderItem, Payment, Income, Setting, Cart, CartItem, Discount, PendingPrint, Notification, Branch, CashierShift
+from models import db, User, Role, Permission, Category, MenuItem, Table, Order, OrderItem, Payment, Income, Setting, Cart, CartItem, Discount, PendingPrint, Notification, Branch, CashierShift, Expense
 
 # Import USB printer module
 try:
@@ -1944,6 +1944,115 @@ def admin_branch_delete(branch_id):
     
     flash(f'Cabang "{name}" berhasil dihapus.', 'success')
     return redirect(url_for('admin_branches'))
+
+
+# ============================================
+# EXPENSE TRACKING (PENGELUARAN)
+# ============================================
+
+@app.route('/expenses')
+@login_required
+@role_required('admin', 'manager', 'kasir')
+def expenses():
+    """Expense tracking page"""
+    from datetime import date
+    
+    # Get filter parameters
+    month = request.args.get('month', date.today().strftime('%Y-%m'))
+    category_filter = request.args.get('category', 'all')
+    
+    try:
+        filter_year, filter_month = map(int, month.split('-'))
+    except (ValueError, AttributeError):
+        filter_year, filter_month = date.today().year, date.today().month
+    
+    # Build query
+    query = Expense.query.filter(
+        db.extract('year', Expense.date) == filter_year,
+        db.extract('month', Expense.date) == filter_month
+    )
+    
+    if category_filter != 'all':
+        query = query.filter(Expense.category == category_filter)
+    
+    expense_list = query.order_by(Expense.date.desc(), Expense.created_at.desc()).all()
+    
+    # Calculate totals
+    total_expenses = sum(e.amount for e in expense_list)
+    category_totals = {}
+    for e in expense_list:
+        label = Expense.CATEGORIES.get(e.category, e.category)
+        category_totals[label] = category_totals.get(label, 0) + e.amount
+    
+    return render_template('expenses.html',
+                         expenses=expense_list,
+                         total_expenses=total_expenses,
+                         category_totals=category_totals,
+                         expense_categories=Expense.CATEGORIES,
+                         current_month=month,
+                         category_filter=category_filter,
+                         active_page='expenses',
+                         now=datetime.now())
+
+@app.route('/expenses/add', methods=['POST'])
+@login_required
+@role_required('admin', 'manager', 'kasir')
+def expense_add():
+    """Add a new expense"""
+    from datetime import date as date_type
+    
+    expense_date = request.form.get('date')
+    category = request.form.get('category', '').strip()
+    description = request.form.get('description', '').strip()
+    amount = request.form.get('amount', '0')
+    notes = request.form.get('notes', '').strip()
+    
+    if not description or not category:
+        flash('Deskripsi dan kategori wajib diisi.', 'danger')
+        return redirect(url_for('expenses'))
+    
+    try:
+        amount = int(amount)
+        if amount <= 0:
+            raise ValueError
+    except (ValueError, TypeError):
+        flash('Jumlah harus angka positif.', 'danger')
+        return redirect(url_for('expenses'))
+    
+    try:
+        parsed_date = date_type.fromisoformat(expense_date) if expense_date else date_type.today()
+    except ValueError:
+        parsed_date = date_type.today()
+    
+    expense = Expense(
+        date=parsed_date,
+        category=category,
+        description=description,
+        amount=amount,
+        notes=notes,
+        user_id=current_user.id
+    )
+    db.session.add(expense)
+    db.session.commit()
+    
+    flash(f'Pengeluaran "{description}" berhasil ditambahkan!', 'success')
+    return redirect(url_for('expenses'))
+
+@app.route('/expenses/<int:expense_id>/delete', methods=['POST'])
+@login_required
+@role_required('admin', 'manager')
+def expense_delete(expense_id):
+    """Delete an expense"""
+    expense = db.session.get(Expense, expense_id)
+    if not expense:
+        flash('Pengeluaran tidak ditemukan.', 'danger')
+        return redirect(url_for('expenses'))
+    
+    db.session.delete(expense)
+    db.session.commit()
+    
+    flash('Pengeluaran berhasil dihapus.', 'success')
+    return redirect(url_for('expenses'))
 
 
 # ============================================
