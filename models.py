@@ -239,6 +239,7 @@ class OrderItem(db.Model):
     menu_item_id = db.Column(db.Integer, db.ForeignKey('menu_items.id'))
     name = db.Column(db.String(200), nullable=False)
     price = db.Column(db.Integer, nullable=False)
+    menu_price_snapshot = db.Column(db.Integer, nullable=True)  # Price from menu at time of order
     quantity = db.Column(db.Integer, default=1)
     subtotal = db.Column(db.Integer, nullable=False)
     spice_level = db.Column(db.String(20))  # none, mild, medium, hot, extra_hot
@@ -255,6 +256,7 @@ class OrderItem(db.Model):
             'menu_item_id': self.menu_item_id,
             'name': self.name,
             'price': self.price,
+            'menu_price_snapshot': self.menu_price_snapshot,
             'quantity': self.quantity,
             'subtotal': self.subtotal,
             'spice_level': self.spice_level,
@@ -724,11 +726,16 @@ class ExternalOrder(db.Model):
     external_order_id = db.Column(db.String(100), nullable=False)
     order_id = db.Column(db.Integer, db.ForeignKey('orders.id'), nullable=True)
     raw_data = db.Column(db.Text)  # Store original webhook payload as JSON
-    status = db.Column(db.String(30), default='received')  # received, processed, failed
+    status = db.Column(db.String(30), default='received')  # received, accepted, printed, failed
     error_message = db.Column(db.Text, nullable=True)
+    signature_status = db.Column(db.String(20), default='unchecked')  # unchecked, valid, invalid, skipped
+    retry_count = db.Column(db.Integer, default=0)
+    last_retry_at = db.Column(db.DateTime, nullable=True)
     branch_id = db.Column(db.Integer, db.ForeignKey('branches.id'), nullable=True)
     created_at = db.Column(db.DateTime, default=utc_now)
     processed_at = db.Column(db.DateTime, nullable=True)
+    accepted_at = db.Column(db.DateTime, nullable=True)
+    printed_at = db.Column(db.DateTime, nullable=True)
     
     order = db.relationship('Order', backref=db.backref('external_order', uselist=False))
     branch = db.relationship('Branch', backref=db.backref('external_orders', lazy='dynamic'))
@@ -740,10 +747,41 @@ class ExternalOrder(db.Model):
             'external_order_id': self.external_order_id,
             'order_id': self.order_id,
             'status': self.status,
+            'signature_status': self.signature_status,
+            'retry_count': self.retry_count,
             'error_message': self.error_message,
             'created_at': self.created_at.isoformat() if self.created_at else None,
-            'processed_at': self.processed_at.isoformat() if self.processed_at else None
+            'processed_at': self.processed_at.isoformat() if self.processed_at else None,
+            'accepted_at': self.accepted_at.isoformat() if self.accepted_at else None,
+            'printed_at': self.printed_at.isoformat() if self.printed_at else None
         }
     
     def __repr__(self):
         return f'<ExternalOrder {self.platform}:{self.external_order_id}>'
+
+
+class WebhookLog(db.Model):
+    """Log all webhook attempts including signature failures"""
+    __tablename__ = 'webhook_logs'
+    
+    id = db.Column(db.Integer, primary_key=True)
+    platform = db.Column(db.String(30), nullable=False)
+    request_ip = db.Column(db.String(45))
+    request_headers = db.Column(db.Text)  # JSON: relevant headers for debugging
+    request_body_hash = db.Column(db.String(64))  # SHA-256 hash of body (not the body itself for security)
+    signature_provided = db.Column(db.String(255))
+    signature_expected_hash = db.Column(db.String(64))  # Hash of expected (not the value itself)
+    result = db.Column(db.String(20), nullable=False)  # success, sig_invalid, sig_missing, error, rate_limited
+    error_detail = db.Column(db.Text, nullable=True)
+    external_order_id = db.Column(db.Integer, db.ForeignKey('external_orders.id'), nullable=True)
+    created_at = db.Column(db.DateTime, default=utc_now)
+    
+    def to_dict(self):
+        return {
+            'id': self.id,
+            'platform': self.platform,
+            'request_ip': self.request_ip,
+            'result': self.result,
+            'error_detail': self.error_detail,
+            'created_at': self.created_at.isoformat() if self.created_at else None
+        }
