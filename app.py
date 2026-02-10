@@ -944,18 +944,28 @@ def api_create_order():
         for item in items:
             menu_item = db.session.get(MenuItem, item.get('menu_item_id') or item.get('id'))
             if menu_item:
+                qty = item.get('quantity', 1)
+                
+                # Check stock availability
+                if menu_item.stock < qty:
+                    db.session.rollback()
+                    return jsonify({'error': f'Stok "{menu_item.name}" tidak cukup (sisa {menu_item.stock})'}), 400
+                
                 order_item = OrderItem(
                     order_id=order.id,
                     menu_item_id=menu_item.id,
                     name=menu_item.name,
                     price=menu_item.price,
-                    quantity=item.get('quantity', 1),
-                    subtotal=menu_item.price * item.get('quantity', 1),
+                    quantity=qty,
+                    subtotal=menu_item.price * qty,
                     spice_level=item.get('spice_level'),
                     temperature=item.get('temperature'),
                     notes=item.get('notes')
                 )
                 db.session.add(order_item)
+                
+                # Decrement stock
+                menu_item.stock -= qty
         
         # Calculate totals
         order.calculate_totals()
@@ -1140,10 +1150,21 @@ def api_update_order_status(order_id):
     order = Order.query.get_or_404(order_id)
     data = request.json
     
-    order.status = data.get('status', order.status)
+    new_status = data.get('status', order.status)
+    old_status = order.status
+    order.status = new_status
     
-    if order.status == 'completed' and order.table:
+    # Handle table status
+    if new_status in ('completed', 'cancelled') and order.table:
         order.table.status = 'available'
+    
+    # Restore stock when order is cancelled
+    if new_status == 'cancelled' and old_status != 'cancelled':
+        for item in order.items:
+            if item.menu_item_id:
+                menu_item = db.session.get(MenuItem, item.menu_item_id)
+                if menu_item:
+                    menu_item.stock += item.quantity
     
     db.session.commit()
     
@@ -2200,6 +2221,8 @@ def api_update_item_status(item_id):
     
     if all(s == 'served' for s in all_items_status):
         order.status = 'completed'
+        if order.table:
+            order.table.status = 'available'
     elif all(s in ['ready', 'served'] for s in all_items_status):
         order.status = 'processing'  # Ready to serve
     elif any(s == 'cooking' for s in all_items_status):
@@ -2233,6 +2256,8 @@ def api_update_order_kitchen_status(order_id):
     # Update order status
     if new_status == 'served':
         order.status = 'completed'
+        if order.table:
+            order.table.status = 'available'
     elif new_status in ['cooking', 'ready']:
         order.status = 'processing'
     else:
