@@ -1,0 +1,119 @@
+<!-- Mobile Menu Toggle Button -->
+<button id="mobile-menu-btn" onclick="toggleSidebar()" class="md:hidden fixed top-4 left-4 z-50 w-10 h-10 bg-gray-800 rounded-xl flex items-center justify-center text-white shadow-lg">
+    <i class="fas fa-bars"></i>
+</button>
+
+<!-- Sidebar Overlay (Mobile) -->
+<div id="sidebar-overlay" onclick="toggleSidebar()" class="md:hidden fixed inset-0 bg-black/50 z-40 hidden"></div>
+
+<!-- Sidebar Navigation - Reusable Partial -->
+<aside id="sidebar" class="w-64 glass-dark fixed h-full z-40 transition-transform duration-300 -translate-x-full md:translate-x-0">
+    <div class="p-6">
+        <!-- Close Button (Mobile) -->
+        <button onclick="toggleSidebar()" class="md:hidden absolute top-4 right-4 w-8 h-8 rounded-lg bg-white/10 flex items-center justify-center text-gray-400 hover:text-white">
+            <i class="fas fa-times"></i>
+        </button>
+        
+        <!-- Logo -->
+        <div class="flex items-center space-x-3 mb-8">
+            <img src="{{ url_for('static', filename='logo.png') }}" alt="Dapoer Teras Obor" class="w-10 h-10 rounded-xl object-contain">
+            <span class="text-xl font-display font-bold gradient-text">Dapoer Teras Obor</span>
+        </div>
+        
+        <!-- Navigation -->
+        <nav class="space-y-2">
+            <a href="{{ url_for('dashboard') }}" class="sidebar-link {% if active_page == 'dashboard' %}active{% endif %} flex items-center space-x-3 px-4 py-3 rounded-xl {% if active_page == 'dashboard' %}text-white{% else %}text-gray-400 hover:text-white{% endif %}">
+                <i class="fas fa-home w-5"></i>
+                <span>Dashboard</span>
+            </a>
+            
+            <a href="{{ url_for('pos') }}" class="sidebar-link {% if active_page == 'pos' %}active{% endif %} flex items-center space-x-3 px-4 py-3 rounded-xl {% if active_page == 'pos' %}text-white{% else %}text-gray-400 hover:text-white{% endif %}">
+                <i class="fas fa-cash-register w-5"></i>
+                <span>Kasir / POS</span>
+            </a>
+            
+            <a href="{{ url_for('orders') }}" class="sidebar-link {% if active_page == 'orders' %}active{% endif %} flex items-center space-x-3 px-4 py-3 rounded-xl {% if active_page == 'orders' %}text-white{% else %}text-gray-400 hover:text-white{% endif %}">
+                <i class="fas fa-receipt w-5"></i>
+                <span>Pesanan</span>
+            </a>
+            
+            <a href="{{ url_for('kitchen') }}" class="sidebar-link {% if active_page == 'kitchen' %}active{% endif %} flex items-center space-x-3 px-4 py-3 rounded-xl {% if active_page == 'kitchen' %}text-white{% else %}text-gray-400 hover:text-white{% endif %}">
+                <i class="fas fa-fire-burner w-5"></i>
+                <span>Dapur</span>
+            </a>
+            
+            <a href="{{ url_for('reports') }}" class="sidebar-link {% if active_page == 'reports' or active_page == 'income_report' %}active{% endif %} flex items-center space-x-3 px-4 py-3 rounded-xl {% if active_page == 'reports' or active_page == 'income_report' %}text-white{% else %}text-gray-400 hover:text-white{% endif %}">
+                <i class="fas fa-chart-bar w-5"></i>
+                <span>Laporan</span>
+            </a>
+            
+            {% if current_user.has_role('admin') or current_user.has_role('manager') %}
+            <!-- Admin Section -->
+            <div class="pt-4 mt-4 border-t border-white/10">
+                <p class="px-4 text-xs font-semibold text-gray-500 uppercase tracking-wider mb-2">Admin</p>
+                
+                <a href="{{ url_for('admin_users') }}" class="sidebar-link {% if active_page == 'admin_users' %}active{% endif %} flex items-center space-x-3 px-4 py-3 rounded-xl {% if active_page == 'admin_users' %}text-white{% else %}text-gray-400 hover:text-white{% endif %}">
+                    <i class="fas fa-users-cog w-5"></i>
+                    <span>Pengguna</span>
+                </a>
+                
+                <a href="{{ url_for('admin_menu') }}" class="sidebar-link {% if active_page == 'admin_menu' %}active{% endif %} flex items-center space-x-3 px-4 py-3 rounded-xl {% if active_page == 'admin_menu' %}text-white{% else %}text-gray-400 hover:text-white{% endif %}">
+                    <i class="fas fa-utensils w-5"></i>
+                    <span>Menu</span>
+                </a>
+                
+                <a href="{{ url_for('admin_tables') }}" class="sidebar-link {% if active_page == 'admin_tables' %}active{% endif %} flex items-center space-x-3 px-4 py-3 rounded-xl {% if active_page == 'admin_tables' %}text-white{% else %}text-gray-400 hover:text-white{% endif %}">
+                    <i class="fas fa-chair w-5"></i>
+                    <span>Meja</span>
+                </a>
+                
+                <a href="{{ url_for('admin_discounts') }}" class="sidebar-link {% if active_page == 'admin_discounts' %}active{% endif %} flex items-center space-x-3 px-4 py-3 rounded-xl {% if active_page == 'admin_discounts' %}text-white{% else %}text-gray-400 hover:text-white{% endif %}">
+                    <i class="fas fa-tag w-5"></i>
+                    <span>Diskon & Promo</span>
+                </a>
+                
+                <a href="{{ url_for('printer_station') }}" target="_blank" class="sidebar-link flex items-center space-x-3 px-4 py-3 rounded-xl text-gray-400 hover:text-white">
+                    <i class="fas fa-print w-5"></i>
+                    <span>Printer Station</span>
+                    <i class="fas fa-external-link-alt text-xs ml-auto"></i>
+                </a>
+                
+                <a href="{{ url_for('admin_payment_gateway') }}" class="sidebar-link {% if active_page == 'admin_payment_gateway' %}active{% endif %} flex items-center space-x-3 px-4 py-3 rounded-xl {% if active_page == 'admin_payment_gateway' %}text-white{% else %}text-gray-400 hover:text-white{% endif %}">
+                    <i class="fas fa-credit-card w-5"></i>
+                    <span>Payment Gateway</span>
+                </a>
+            </div>
+            {% endif %}
+            
+            <!-- User Section -->
+            <div class="pt-4 mt-4 border-t border-white/10">
+                <a href="{{ url_for('profile') }}" class="sidebar-link {% if active_page == 'profile' %}active{% endif %} flex items-center space-x-3 px-4 py-3 rounded-xl {% if active_page == 'profile' %}text-white{% else %}text-gray-400 hover:text-white{% endif %}">
+                    <i class="fas fa-user-circle w-5"></i>
+                    <span>Profil</span>
+                </a>
+                <a href="{{ url_for('logout') }}" class="sidebar-link flex items-center space-x-3 px-4 py-3 rounded-xl text-red-400 hover:text-red-300">
+                    <i class="fas fa-sign-out-alt w-5"></i>
+                    <span>Logout</span>
+                </a>
+            </div>
+        </nav>
+    </div>
+</aside>
+
+<!-- PrinterManager is loaded from base.html - no need to load again -->
+
+<script>
+function toggleSidebar() {
+    const sidebar = document.getElementById('sidebar');
+    const overlay = document.getElementById('sidebar-overlay');
+    const isOpen = !sidebar.classList.contains('-translate-x-full');
+    
+    if (isOpen) {
+        sidebar.classList.add('-translate-x-full');
+        overlay.classList.add('hidden');
+    } else {
+        sidebar.classList.remove('-translate-x-full');
+        overlay.classList.remove('hidden');
+    }
+}
+</script>
