@@ -38,7 +38,11 @@
                     </div>
                 </div>
                 <div class="mt-4 flex items-center text-sm">
-                    <span class="text-green-400"><i class="fas fa-arrow-up mr-1"></i>12%</span>
+                    {% if income_growth >= 0 %}
+                    <span class="text-green-400"><i class="fas fa-arrow-up mr-1"></i>{{ income_growth }}%</span>
+                    {% else %}
+                    <span class="text-red-400"><i class="fas fa-arrow-down mr-1"></i>{{ income_growth|abs }}%</span>
+                    {% endif %}
                     <span class="text-gray-500 ml-2">dari kemarin</span>
                 </div>
             </div>
@@ -55,7 +59,11 @@
                     </div>
                 </div>
                 <div class="mt-4 flex items-center text-sm">
-                    <span class="text-blue-400"><i class="fas fa-arrow-up mr-1"></i>8%</span>
+                    {% if orders_growth >= 0 %}
+                    <span class="text-blue-400"><i class="fas fa-arrow-up mr-1"></i>{{ orders_growth }}%</span>
+                    {% else %}
+                    <span class="text-red-400"><i class="fas fa-arrow-down mr-1"></i>{{ orders_growth|abs }}%</span>
+                    {% endif %}
                     <span class="text-gray-500 ml-2">dari kemarin</span>
                 </div>
             </div>
@@ -89,7 +97,11 @@
                     </div>
                 </div>
                 <div class="mt-4 flex items-center text-sm">
-                    <span class="text-purple-400"><i class="fas fa-arrow-up mr-1"></i>5%</span>
+                    {% if avg_growth >= 0 %}
+                    <span class="text-purple-400"><i class="fas fa-arrow-up mr-1"></i>{{ avg_growth }}%</span>
+                    {% else %}
+                    <span class="text-red-400"><i class="fas fa-arrow-down mr-1"></i>{{ avg_growth|abs }}%</span>
+                    {% endif %}
                     <span class="text-gray-500 ml-2">dari kemarin</span>
                 </div>
             </div>

@@ -61,19 +61,25 @@
             {% for item in menu_items %}
             <div class="menu-item glass-card rounded-2xl overflow-hidden group" 
                  data-name="{{ item.name|lower }}" 
-                 data-category="{{ item.category_id }}">
+                 data-category="{{ item.category_id }}"
+                 id="menu-card-{{ item.id }}">
                 <div class="relative">
                     <img src="{{ item.image }}" alt="{{ item.name }}" class="w-full h-28 object-cover">
                     {% if item.is_popular %}
                     <span class="absolute top-2 left-2 px-2 py-0.5 bg-yellow-500 text-yellow-900 text-xs font-bold rounded-full">Popular</span>
                     {% endif %}
-                    {% if not item.is_available %}
-                    <div class="absolute inset-0 bg-black/60 flex items-center justify-center">
-                        <span class="text-red-400 font-bold">Tidak Tersedia</span>
+                    <!-- Availability overlay -->
+                    <div id="unavailable-overlay-{{ item.id }}" class="absolute inset-0 bg-black/60 flex items-center justify-center {% if item.is_available %}hidden{% endif %}">
+                        <span class="text-red-400 font-bold text-sm">HABIS</span>
                     </div>
-                    {% endif %}
                     <!-- Hover Actions -->
                     <div class="absolute inset-0 bg-black/70 opacity-0 group-hover:opacity-100 transition-opacity flex items-center justify-center gap-2">
+                        <button onclick="toggleAvailability({{ item.id }})" 
+                                id="toggle-btn-{{ item.id }}"
+                                class="p-2 rounded-full transition {% if item.is_available %}bg-orange-500 hover:bg-orange-600{% else %}bg-green-500 hover:bg-green-600{% endif %}"
+                                title="{% if item.is_available %}Tandai Habis{% else %}Tandai Tersedia{% endif %}">
+                            <i class="fas {% if item.is_available %}fa-toggle-on{% else %}fa-toggle-off{% endif %} text-white"></i>
+                        </button>
                         <button onclick="openEditModal({{ item.id }})" 
                                 class="p-2 bg-blue-500 rounded-full hover:bg-blue-600 transition">
                             <i class="fas fa-edit text-white"></i>
@@ -85,7 +91,12 @@
                     </div>
                 </div>
                 <div class="p-3">
-                    <p class="text-xs text-gray-500">{{ item.code }}</p>
+                    <div class="flex items-center justify-between">
+                        <p class="text-xs text-gray-500">{{ item.code }}</p>
+                        <span id="badge-{{ item.id }}" class="px-1.5 py-0.5 rounded text-[10px] font-bold {% if item.is_available %}bg-green-500/20 text-green-400{% else %}bg-red-500/20 text-red-400{% endif %}">
+                            {% if item.is_available %}Tersedia{% else %}Habis{% endif %}
+                        </span>
+                    </div>
                     <h3 class="font-medium text-sm line-clamp-2 h-10">{{ item.name }}</h3>
                     <p class="text-primary-400 font-bold">{{ item.price|format_currency }}</p>
                     <p class="text-xs text-gray-500">{{ item.category.name if item.category else '-' }}</p>
@@ -217,6 +228,42 @@
 </div>
 
 <script>
+// Toggle Menu Availability (Habis / Tersedia)
+function toggleAvailability(id) {
+    fetch('/api/menu/' + id + '/toggle', {
+        method: 'POST',
+        headers: {
+            'Content-Type': 'application/json',
+            'X-CSRFToken': '{{ csrf_token() }}'
+        }
+    })
+    .then(res => res.json())
+    .then(data => {
+        if (data.success) {
+            const overlay = document.getElementById('unavailable-overlay-' + id);
+            const badge = document.getElementById('badge-' + id);
+            const btn = document.getElementById('toggle-btn-' + id);
+            
+            if (data.is_available) {
+                overlay.classList.add('hidden');
+                badge.className = 'px-1.5 py-0.5 rounded text-[10px] font-bold bg-green-500/20 text-green-400';
+                badge.textContent = 'Tersedia';
+                btn.className = 'p-2 rounded-full transition bg-orange-500 hover:bg-orange-600';
+                btn.title = 'Tandai Habis';
+                btn.innerHTML = '<i class="fas fa-toggle-on text-white"></i>';
+            } else {
+                overlay.classList.remove('hidden');
+                badge.className = 'px-1.5 py-0.5 rounded text-[10px] font-bold bg-red-500/20 text-red-400';
+                badge.textContent = 'Habis';
+                btn.className = 'p-2 rounded-full transition bg-green-500 hover:bg-green-600';
+                btn.title = 'Tandai Tersedia';
+                btn.innerHTML = '<i class="fas fa-toggle-off text-white"></i>';
+            }
+        }
+    })
+    .catch(err => console.error('Toggle failed:', err));
+}
+
 // Search and Filter
 function filterMenu() {
     const search = document.getElementById('search-menu').value.toLowerCase();

@@ -774,6 +774,7 @@ def change_password():
 def dashboard():
     # Get statistics
     today = datetime.now().date()
+    yesterday = today - timedelta(days=1)
     
     # Get only completed/paid orders today
     today_orders = branch_filter(Order.query, Order).filter(
@@ -784,6 +785,27 @@ def dashboard():
     paid_orders_today = [o for o in today_orders if o.payment and o.payment.status == 'paid']
     total_income_today = sum(o.total for o in paid_orders_today)
     total_orders_today = len(paid_orders_today)
+    
+    # Yesterday's data for real growth percentages
+    yesterday_orders = branch_filter(Order.query, Order).filter(
+        db.func.date(Order.created_at) == yesterday
+    ).all()
+    paid_orders_yesterday = [o for o in yesterday_orders if o.payment and o.payment.status == 'paid']
+    total_income_yesterday = sum(o.total for o in paid_orders_yesterday)
+    total_orders_yesterday = len(paid_orders_yesterday)
+    
+    # Calculate real growth percentages
+    def calc_growth(current, previous):
+        if previous == 0:
+            return 100.0 if current > 0 else 0.0
+        return round(((current - previous) / previous) * 100, 1)
+    
+    income_growth = calc_growth(total_income_today, total_income_yesterday)
+    orders_growth = calc_growth(total_orders_today, total_orders_yesterday)
+    
+    today_avg = total_income_today // total_orders_today if total_orders_today > 0 else 0
+    yesterday_avg = total_income_yesterday // total_orders_yesterday if total_orders_yesterday > 0 else 0
+    avg_growth = calc_growth(today_avg, yesterday_avg)
     
     # Get popular items from actual order statistics (last 30 days)
     # Query to find most ordered items
@@ -854,6 +876,9 @@ def dashboard():
     return render_template('dashboard.html',
                          total_income_today=total_income_today,
                          total_orders_today=total_orders_today,
+                         income_growth=income_growth,
+                         orders_growth=orders_growth,
+                         avg_growth=avg_growth,
                          popular_items=popular_items,
                          recent_orders=recent_orders,
                          tables=tables,
@@ -1768,6 +1793,28 @@ def api_get_menu_item(id):
         data['is_available'] = bms.is_available
         data['stock'] = bms.stock
     return jsonify(data)
+
+@app.route('/api/menu/<int:id>/toggle', methods=['POST'])
+@login_required
+@role_required('admin', 'manager')
+def api_toggle_menu(id):
+    """Toggle menu item availability (on/off / habis)"""
+    menu_item = MenuItem.query.get_or_404(id)
+    bid = get_user_branch_id()
+    
+    if bid:
+        # Branch user: toggle per-branch availability
+        bms = get_branch_stock(menu_item.id, bid)
+        bms.is_available = not bms.is_available
+        new_status = bms.is_available
+    else:
+        # Owner: toggle global + all branches
+        menu_item.is_available = not menu_item.is_available
+        new_status = menu_item.is_available
+        BranchMenuStock.query.filter_by(menu_item_id=menu_item.id).update({'is_available': new_status})
+    
+    db.session.commit()
+    return jsonify({'success': True, 'is_available': new_status, 'name': menu_item.name})
 
 @app.route('/admin/printer')
 @login_required
@@ -2834,6 +2881,243 @@ def usb_print_pending():
 @role_required('admin', 'manager')
 def reports():
     return render_template('reports.html')
+
+@app.route('/analytics')
+@login_required
+@role_required('admin', 'manager')
+def analytics():
+    """Comprehensive analytics dashboard with real data and percentages"""
+    today = datetime.now().date()
+    yesterday = today - timedelta(days=1)
+    week_ago = today - timedelta(days=7)
+    two_weeks_ago = today - timedelta(days=14)
+    month_start = today.replace(day=1)
+    last_month_start = (month_start - timedelta(days=1)).replace(day=1)
+    last_month_end = month_start - timedelta(days=1)
+    
+    # Helper: calculate growth percentage
+    def growth_pct(current, previous):
+        if previous == 0:
+            return 100.0 if current > 0 else 0.0
+        return round(((current - previous) / previous) * 100, 1)
+    
+    # ── Today vs Yesterday ──
+    today_orders = branch_filter(Order.query, Order).filter(
+        db.func.date(Order.created_at) == today
+    ).all()
+    yesterday_orders = branch_filter(Order.query, Order).filter(
+        db.func.date(Order.created_at) == yesterday
+    ).all()
+    
+    today_paid = [o for o in today_orders if o.payment and o.payment.status == 'paid']
+    yesterday_paid = [o for o in yesterday_orders if o.payment and o.payment.status == 'paid']
+    
+    today_revenue = sum(o.total for o in today_paid)
+    yesterday_revenue = sum(o.total for o in yesterday_paid)
+    revenue_growth = growth_pct(today_revenue, yesterday_revenue)
+    
+    today_order_count = len(today_paid)
+    yesterday_order_count = len(yesterday_paid)
+    order_growth = growth_pct(today_order_count, yesterday_order_count)
+    
+    today_avg = today_revenue // today_order_count if today_order_count > 0 else 0
+    yesterday_avg = yesterday_revenue // yesterday_order_count if yesterday_order_count > 0 else 0
+    avg_growth = growth_pct(today_avg, yesterday_avg)
+    
+    today_cancelled = len([o for o in today_orders if o.status == 'cancelled'])
+    today_cancel_rate = round((today_cancelled / len(today_orders) * 100), 1) if today_orders else 0
+    
+    # ── This Week vs Last Week ──
+    this_week_orders = branch_filter(Order.query, Order).filter(
+        db.func.date(Order.created_at) >= week_ago,
+        db.func.date(Order.created_at) <= today
+    ).all()
+    last_week_orders = branch_filter(Order.query, Order).filter(
+        db.func.date(Order.created_at) >= two_weeks_ago,
+        db.func.date(Order.created_at) < week_ago
+    ).all()
+    
+    this_week_paid = [o for o in this_week_orders if o.payment and o.payment.status == 'paid']
+    last_week_paid = [o for o in last_week_orders if o.payment and o.payment.status == 'paid']
+    
+    week_revenue = sum(o.total for o in this_week_paid)
+    last_week_revenue = sum(o.total for o in last_week_paid)
+    week_growth = growth_pct(week_revenue, last_week_revenue)
+    
+    # ── This Month vs Last Month ──
+    this_month_orders = branch_filter(Order.query, Order).filter(
+        db.func.date(Order.created_at) >= month_start,
+        db.func.date(Order.created_at) <= today
+    ).all()
+    last_month_orders = branch_filter(Order.query, Order).filter(
+        db.func.date(Order.created_at) >= last_month_start,
+        db.func.date(Order.created_at) <= last_month_end
+    ).all()
+    
+    this_month_paid = [o for o in this_month_orders if o.payment and o.payment.status == 'paid']
+    last_month_paid = [o for o in last_month_orders if o.payment and o.payment.status == 'paid']
+    
+    month_revenue = sum(o.total for o in this_month_paid)
+    last_month_revenue = sum(o.total for o in last_month_paid)
+    month_growth = growth_pct(month_revenue, last_month_revenue)
+    
+    # ── Payment Method Breakdown (this month) ──
+    payment_methods = {}
+    for o in this_month_paid:
+        method = o.payment.payment_method if o.payment else 'unknown'
+        if method not in payment_methods:
+            payment_methods[method] = {'count': 0, 'total': 0}
+        payment_methods[method]['count'] += 1
+        payment_methods[method]['total'] += o.total
+    
+    total_payment_count = sum(v['count'] for v in payment_methods.values())
+    for method in payment_methods:
+        payment_methods[method]['percentage'] = round(
+            (payment_methods[method]['count'] / total_payment_count * 100), 1
+        ) if total_payment_count > 0 else 0
+    
+    # ── Order Source Breakdown (this month) ──
+    source_breakdown = {}
+    for o in this_month_paid:
+        src = o.source or 'pos'
+        if src not in source_breakdown:
+            source_breakdown[src] = {'count': 0, 'total': 0}
+        source_breakdown[src]['count'] += 1
+        source_breakdown[src]['total'] += o.total
+    
+    total_source_count = sum(v['count'] for v in source_breakdown.values())
+    for src in source_breakdown:
+        source_breakdown[src]['percentage'] = round(
+            (source_breakdown[src]['count'] / total_source_count * 100), 1
+        ) if total_source_count > 0 else 0
+    
+    # ── Order Type Breakdown (dine_in / takeaway / online) ──
+    type_breakdown = {}
+    for o in this_month_paid:
+        otype = o.order_type or 'dine_in'
+        if otype not in type_breakdown:
+            type_breakdown[otype] = {'count': 0, 'total': 0}
+        type_breakdown[otype]['count'] += 1
+        type_breakdown[otype]['total'] += o.total
+    
+    for otype in type_breakdown:
+        type_breakdown[otype]['percentage'] = round(
+            (type_breakdown[otype]['count'] / total_source_count * 100), 1
+        ) if total_source_count > 0 else 0
+    
+    # ── Category Performance (this month) ──
+    category_perf = {}
+    for o in this_month_paid:
+        for item in o.items:
+            cat_name = item.menu_item.category.name if item.menu_item and item.menu_item.category else 'Tanpa Kategori'
+            if cat_name not in category_perf:
+                category_perf[cat_name] = {'count': 0, 'qty': 0, 'total': 0}
+            category_perf[cat_name]['count'] += 1
+            category_perf[cat_name]['qty'] += item.quantity
+            category_perf[cat_name]['total'] += item.subtotal
+    
+    total_cat_revenue = sum(v['total'] for v in category_perf.values())
+    for cat in category_perf:
+        category_perf[cat]['percentage'] = round(
+            (category_perf[cat]['total'] / total_cat_revenue * 100), 1
+        ) if total_cat_revenue > 0 else 0
+    
+    # Sort by revenue desc
+    category_perf = dict(sorted(category_perf.items(), key=lambda x: x[1]['total'], reverse=True))
+    
+    # ── Top 10 Menu Items (this month) ──
+    top_items = {}
+    for o in this_month_paid:
+        for item in o.items:
+            name = item.name
+            if name not in top_items:
+                top_items[name] = {'qty': 0, 'total': 0}
+            top_items[name]['qty'] += item.quantity
+            top_items[name]['total'] += item.subtotal
+    
+    top_items = dict(sorted(top_items.items(), key=lambda x: x[1]['qty'], reverse=True)[:10])
+    total_item_qty = sum(v['qty'] for v in top_items.values())
+    for name in top_items:
+        top_items[name]['percentage'] = round(
+            (top_items[name]['qty'] / total_item_qty * 100), 1
+        ) if total_item_qty > 0 else 0
+    
+    # ── Hourly Order Distribution (this week) ──
+    hourly_dist = {h: 0 for h in range(24)}
+    for o in this_week_paid:
+        if o.created_at:
+            hourly_dist[o.created_at.hour] += 1
+    
+    peak_hour = max(hourly_dist, key=hourly_dist.get) if any(hourly_dist.values()) else 12
+    
+    # ── Daily Revenue Trend (last 30 days) ──
+    thirty_days_ago = today - timedelta(days=30)
+    month_all_orders = branch_filter(Order.query, Order).filter(
+        db.func.date(Order.created_at) >= thirty_days_ago,
+        db.func.date(Order.created_at) <= today
+    ).all()
+    
+    daily_trend = {}
+    for o in month_all_orders:
+        if o.payment and o.payment.status == 'paid':
+            day_str = o.created_at.strftime('%Y-%m-%d')
+            if day_str not in daily_trend:
+                daily_trend[day_str] = {'revenue': 0, 'orders': 0}
+            daily_trend[day_str]['revenue'] += o.total
+            daily_trend[day_str]['orders'] += 1
+    
+    # Fill missing days with 0
+    daily_labels = []
+    daily_revenues = []
+    daily_orders_list = []
+    current_day = thirty_days_ago
+    while current_day <= today:
+        day_str = current_day.strftime('%Y-%m-%d')
+        daily_labels.append(current_day.strftime('%d/%m'))
+        daily_revenues.append(daily_trend.get(day_str, {}).get('revenue', 0))
+        daily_orders_list.append(daily_trend.get(day_str, {}).get('orders', 0))
+        current_day += timedelta(days=1)
+    
+    # ── Expenses this month ──
+    bid = get_user_branch_id()
+    expense_query = Expense.query.filter(
+        db.func.date(Expense.date) >= month_start,
+        db.func.date(Expense.date) <= today
+    )
+    if bid:
+        expense_query = expense_query.filter(Expense.branch_id == bid)
+    total_expenses = sum(e.amount for e in expense_query.all())
+    net_profit = month_revenue - total_expenses
+    profit_margin = round((net_profit / month_revenue * 100), 1) if month_revenue > 0 else 0
+    
+    return render_template('analytics.html',
+        today_revenue=today_revenue,
+        yesterday_revenue=yesterday_revenue,
+        revenue_growth=revenue_growth,
+        today_order_count=today_order_count,
+        order_growth=order_growth,
+        today_avg=today_avg,
+        avg_growth=avg_growth,
+        today_cancel_rate=today_cancel_rate,
+        week_revenue=week_revenue,
+        week_growth=week_growth,
+        month_revenue=month_revenue,
+        month_growth=month_growth,
+        month_orders=len(this_month_paid),
+        payment_methods=payment_methods,
+        source_breakdown=source_breakdown,
+        type_breakdown=type_breakdown,
+        category_perf=category_perf,
+        top_items=top_items,
+        hourly_dist=hourly_dist,
+        peak_hour=peak_hour,
+        daily_labels=daily_labels,
+        daily_revenues=daily_revenues,
+        daily_orders_list=daily_orders_list,
+        total_expenses=total_expenses,
+        net_profit=net_profit,
+        profit_margin=profit_margin
+    )
 
 @app.route('/reports/income')
 @login_required

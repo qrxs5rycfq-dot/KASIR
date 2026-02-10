@@ -61,6 +61,11 @@
                 <span>Laporan</span>
             </a>
             
+            <a href="{{ url_for('analytics') }}" class="sidebar-link {% if active_page == 'analytics' %}active{% endif %} flex items-center space-x-3 px-4 py-3 rounded-xl {% if active_page == 'analytics' %}text-white{% else %}text-gray-400 hover:text-white{% endif %}">
+                <i class="fas fa-chart-pie w-5"></i>
+                <span>Analitik</span>
+            </a>
+            
             <a href="{{ url_for('expenses') }}" class="sidebar-link {% if active_page == 'expenses' %}active{% endif %} flex items-center space-x-3 px-4 py-3 rounded-xl {% if active_page == 'expenses' %}text-white{% else %}text-gray-400 hover:text-white{% endif %}">
                 <i class="fas fa-wallet w-5"></i>
                 <span>Pengeluaran</span>
