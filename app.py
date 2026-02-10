@@ -884,7 +884,7 @@ def online_order(table_number):
 @app.route('/api/menu')
 def api_get_menu():
     bid = get_user_branch_id()
-    menu_items = MenuItem.query.all()
+    menu_items = MenuItem.query.filter_by(is_available=True).all() if bid is None else MenuItem.query.all()
     items = get_menu_with_branch_stock(menu_items, bid)
     # Filter to available only (per-branch availability)
     return jsonify([i for i in items if i['is_available']])
@@ -892,7 +892,8 @@ def api_get_menu():
 @app.route('/api/menu/category/<int:category_id>')
 def api_get_menu_by_category(category_id):
     bid = get_user_branch_id()
-    menu_items = MenuItem.query.filter_by(category_id=category_id).all()
+    base = MenuItem.query.filter_by(category_id=category_id)
+    menu_items = base.filter_by(is_available=True).all() if bid is None else base.all()
     items = get_menu_with_branch_stock(menu_items, bid)
     return jsonify([i for i in items if i['is_available']])
 
@@ -1648,8 +1649,8 @@ def admin_create_menu():
     db.session.add(menu_item)
     db.session.flush()
     
-    # Create BranchMenuStock entries for all active branches
-    branches = Branch.query.filter_by(is_active=True).all()
+    # Create BranchMenuStock entries for all branches (including inactive)
+    branches = Branch.query.all()
     for branch in branches:
         bms = BranchMenuStock(branch_id=branch.id, menu_item_id=menu_item.id, stock=100, is_available=True)
         db.session.add(bms)
@@ -1684,8 +1685,7 @@ def admin_edit_menu(id):
     else:
         # Owner: update global is_available + all branches
         menu_item.is_available = new_available
-        for bms in BranchMenuStock.query.filter_by(menu_item_id=menu_item.id).all():
-            bms.is_available = new_available
+        BranchMenuStock.query.filter_by(menu_item_id=menu_item.id).update({'is_available': new_available})
     
     # Handle image: URL or upload
     image_url = request.form.get('image_url', '').strip()
