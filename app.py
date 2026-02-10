@@ -2583,7 +2583,7 @@ def export_excel():
     ws['A2'] = f'Periode: {start_date} - {end_date}'
     
     # Column headers
-    headers = ['No', 'Tanggal', 'Order ID', 'Customer', 'Subtotal', 'Tax', 'Total', 'Payment Method']
+    headers = ['No', 'Tanggal', 'Order ID', 'Customer', 'Subtotal', 'Total', 'Payment Method']
     for col, header in enumerate(headers, 1):
         cell = ws.cell(row=4, column=col, value=header)
         cell.font = Font(bold=True)
@@ -2596,14 +2596,13 @@ def export_excel():
         ws.cell(row=row, column=3, value=order.order_number)
         ws.cell(row=row, column=4, value=order.customer_name or '-')
         ws.cell(row=row, column=5, value=order.subtotal)
-        ws.cell(row=row, column=6, value=order.tax)
-        ws.cell(row=row, column=7, value=order.total)
-        ws.cell(row=row, column=8, value=order.payment.payment_method if order.payment else '-')
+        ws.cell(row=row, column=6, value=order.total)
+        ws.cell(row=row, column=7, value=order.payment.payment_method if order.payment else '-')
     
     # Total
     total_row = len(paid_orders) + 5
-    ws.cell(row=total_row, column=6, value='TOTAL').font = Font(bold=True)
-    ws.cell(row=total_row, column=7, value=sum(o.total for o in paid_orders)).font = Font(bold=True)
+    ws.cell(row=total_row, column=5, value='TOTAL').font = Font(bold=True)
+    ws.cell(row=total_row, column=6, value=sum(o.total for o in paid_orders)).font = Font(bold=True)
     
     buffer = BytesIO()
     wb.save(buffer)
