@@ -65,6 +65,7 @@ class User(UserMixin, db.Model):
     force_password_change = db.Column(db.Boolean, default=False)  # Force password change on first login
     printer_name = db.Column(db.String(100))  # Store last connected printer name
     printer_id = db.Column(db.String(100))  # Store Bluetooth device ID for auto-reconnect
+    branch_id = db.Column(db.Integer, db.ForeignKey('branches.id'), nullable=True)  # NULL = owner/admin sees all
     created_at = db.Column(db.DateTime, default=utc_now)
     updated_at = db.Column(db.DateTime, default=utc_now, onupdate=utc_now)
     last_login = db.Column(db.DateTime)
@@ -72,6 +73,7 @@ class User(UserMixin, db.Model):
     roles = db.relationship('Role', secondary=user_roles,
                            backref=db.backref('users', lazy='dynamic'))
     orders = db.relationship('Order', backref='user', lazy='dynamic')
+    branch = db.relationship('Branch', backref=db.backref('users', lazy='dynamic'))
     
     def set_password(self, password):
         self.password_hash = generate_password_hash(password)
@@ -108,9 +110,11 @@ class Category(db.Model):
     icon = db.Column(db.String(50))
     order = db.Column(db.Integer, default=0)
     is_active = db.Column(db.Boolean, default=True)
+    branch_id = db.Column(db.Integer, db.ForeignKey('branches.id'), nullable=True)
     created_at = db.Column(db.DateTime, default=utc_now)
     
     menu_items = db.relationship('MenuItem', backref='category', lazy='dynamic')
+    branch = db.relationship('Branch', backref=db.backref('categories', lazy='dynamic'))
     
     def __repr__(self):
         return f'<Category {self.name}>'
@@ -130,8 +134,11 @@ class MenuItem(db.Model):
     has_spicy_option = db.Column(db.Boolean, default=False)
     has_temperature_option = db.Column(db.Boolean, default=False)  # For drinks (hot/cold)
     stock = db.Column(db.Integer, default=100)
+    branch_id = db.Column(db.Integer, db.ForeignKey('branches.id'), nullable=True)
     created_at = db.Column(db.DateTime, default=utc_now)
     updated_at = db.Column(db.DateTime, default=utc_now, onupdate=utc_now)
+    
+    branch = db.relationship('Branch', backref=db.backref('menu_items', lazy='dynamic'))
     
     def to_dict(self):
         return {
@@ -157,15 +164,17 @@ class Table(db.Model):
     __tablename__ = 'tables'
     
     id = db.Column(db.Integer, primary_key=True)
-    number = db.Column(db.String(20), unique=True, nullable=False)
+    number = db.Column(db.String(20), nullable=False)
     name = db.Column(db.String(100))
     capacity = db.Column(db.Integer, default=4)
     qr_code = db.Column(db.String(255))
     status = db.Column(db.String(20), default='available')  # available, occupied, reserved
     is_active = db.Column(db.Boolean, default=True)
+    branch_id = db.Column(db.Integer, db.ForeignKey('branches.id'), nullable=True)
     created_at = db.Column(db.DateTime, default=utc_now)
     
     orders = db.relationship('Order', backref='table', lazy='dynamic')
+    branch = db.relationship('Branch', backref=db.backref('tables', lazy='dynamic'))
     
     def __repr__(self):
         return f'<Table {self.number}>'
@@ -185,11 +194,13 @@ class Order(db.Model):
     discount = db.Column(db.Integer, default=0)
     total = db.Column(db.Integer, default=0)
     notes = db.Column(db.Text)
+    branch_id = db.Column(db.Integer, db.ForeignKey('branches.id'), nullable=True)
     created_at = db.Column(db.DateTime, default=utc_now)
     updated_at = db.Column(db.DateTime, default=utc_now, onupdate=utc_now)
     
     items = db.relationship('OrderItem', backref='order', lazy='dynamic', cascade='all, delete-orphan')
     payment = db.relationship('Payment', backref='order', uselist=False, cascade='all, delete-orphan')
+    branch = db.relationship('Branch', backref=db.backref('orders', lazy='dynamic'))
     
     def calculate_totals(self):
         self.subtotal = sum(item.subtotal for item in self.items)
@@ -299,6 +310,7 @@ class Income(db.Model):
     cash_income = db.Column(db.Integer, default=0)
     online_income = db.Column(db.Integer, default=0)
     notes = db.Column(db.Text)
+    branch_id = db.Column(db.Integer, db.ForeignKey('branches.id'), nullable=True)
     created_at = db.Column(db.DateTime, default=utc_now)
     updated_at = db.Column(db.DateTime, default=utc_now, onupdate=utc_now)
     
@@ -327,6 +339,7 @@ class Cart(db.Model):
     table_id = db.Column(db.Integer, db.ForeignKey('tables.id'), nullable=True)
     order_type = db.Column(db.String(20), default='dine_in')
     customer_name = db.Column(db.String(100))
+    branch_id = db.Column(db.Integer, db.ForeignKey('branches.id'), nullable=True)
     created_at = db.Column(db.DateTime, default=utc_now)
     updated_at = db.Column(db.DateTime, default=utc_now, onupdate=utc_now)
     
@@ -419,6 +432,7 @@ class Discount(db.Model):
     start_date = db.Column(db.DateTime, nullable=True)  # Start date for promo
     end_date = db.Column(db.DateTime, nullable=True)  # End date for promo
     is_active = db.Column(db.Boolean, default=True)
+    branch_id = db.Column(db.Integer, db.ForeignKey('branches.id'), nullable=True)
     created_at = db.Column(db.DateTime, default=utc_now)
     updated_at = db.Column(db.DateTime, default=utc_now, onupdate=utc_now)
     
@@ -538,6 +552,7 @@ class CashierShift(db.Model):
     total_orders = db.Column(db.Integer, default=0)
     notes = db.Column(db.Text)
     status = db.Column(db.String(20), default='open')  # open, closed
+    branch_id = db.Column(db.Integer, db.ForeignKey('branches.id'), nullable=True)
     created_at = db.Column(db.DateTime, default=utc_now)
     
     user = db.relationship('User', backref=db.backref('shifts', lazy='dynamic'))
@@ -573,6 +588,7 @@ class Expense(db.Model):
     amount = db.Column(db.Integer, nullable=False)
     notes = db.Column(db.Text)
     user_id = db.Column(db.Integer, db.ForeignKey('users.id'), nullable=True)
+    branch_id = db.Column(db.Integer, db.ForeignKey('branches.id'), nullable=True)
     created_at = db.Column(db.DateTime, default=utc_now)
     updated_at = db.Column(db.DateTime, default=utc_now, onupdate=utc_now)
     
@@ -615,6 +631,7 @@ class Notification(db.Model):
     message = db.Column(db.Text)
     data = db.Column(db.Text)  # JSON data for additional info
     is_read = db.Column(db.Boolean, default=False)
+    branch_id = db.Column(db.Integer, db.ForeignKey('branches.id'), nullable=True)
     created_at = db.Column(db.DateTime, default=utc_now)
     read_at = db.Column(db.DateTime, nullable=True)
     
@@ -650,6 +667,7 @@ class PendingPrint(db.Model):
     status = db.Column(db.String(20), default='pending')  # pending, printing, completed, failed
     retry_count = db.Column(db.Integer, default=0)
     error_message = db.Column(db.Text, nullable=True)
+    branch_id = db.Column(db.Integer, db.ForeignKey('branches.id'), nullable=True)
     created_at = db.Column(db.DateTime, default=utc_now)
     updated_at = db.Column(db.DateTime, default=utc_now, onupdate=utc_now)
     printed_at = db.Column(db.DateTime, nullable=True)

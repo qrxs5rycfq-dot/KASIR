@@ -77,13 +77,35 @@ app.jinja_env.filters['format_currency'] = format_currency
 # Context processor to make config available in all templates
 @app.context_processor
 def inject_config():
-    return {
+    ctx = {
         'config': {
             'MIDTRANS_CLIENT_KEY': app.config.get('MIDTRANS_CLIENT_KEY', 'SB-Mid-client-XXXXXX'),
             'MIDTRANS_IS_PRODUCTION': app.config.get('MIDTRANS_IS_PRODUCTION', False),
             'APP_NAME': 'Dapoer Teras Obor'
         }
     }
+    # Inject current branch info for sidebar
+    if current_user.is_authenticated:
+        if current_user.branch_id:
+            ctx['current_branch'] = current_user.branch
+        else:
+            ctx['current_branch'] = None  # Admin/owner sees all
+        ctx['all_branches'] = Branch.query.filter_by(is_active=True).all()
+        ctx['is_owner'] = current_user.branch_id is None and current_user.has_role('admin')
+    return ctx
+
+def get_user_branch_id():
+    """Get the current user's branch_id. Returns None for admin/owner (sees all)."""
+    if not current_user.is_authenticated:
+        return None
+    return current_user.branch_id
+
+def branch_filter(query, model):
+    """Apply branch filter to a query. Admin/owner (branch_id=NULL) sees all data."""
+    bid = get_user_branch_id()
+    if bid is not None:
+        return query.filter(model.branch_id == bid)
+    return query
 
 # Permission decorator
 def permission_required(permission):
@@ -202,6 +224,39 @@ def run_migrations():
     if 'cart_item' not in inspector.get_table_names():
         # db.create_all will handle this
         pass
+    
+    # Add branch_id columns to existing tables for multi-branch support
+    branch_tables = {
+        'users': 'branch_id',
+        'categories': 'branch_id',
+        'menu_items': 'branch_id',
+        'tables': 'branch_id',
+        'orders': 'branch_id',
+        'carts': 'branch_id',
+        'discounts': 'branch_id',
+        'incomes': 'branch_id',
+        'expenses': 'branch_id',
+        'cashier_shifts': 'branch_id',
+        'notifications': 'branch_id',
+        'pending_prints': 'branch_id',
+    }
+    for tbl_name, col_name in branch_tables.items():
+        if tbl_name in inspector.get_table_names():
+            columns = [col['name'] for col in inspector.get_columns(tbl_name)]
+            if col_name not in columns:
+                with db.engine.connect() as conn:
+                    conn.execute(text(f"ALTER TABLE {tbl_name} ADD COLUMN {col_name} INTEGER REFERENCES branches(id)"))
+                    conn.commit()
+                print(f"Added {col_name} column to {tbl_name} table")
+    
+    # Remove unique constraint on tables.number if it exists (now scoped per branch)
+    if 'tables' in inspector.get_table_names():
+        try:
+            with db.engine.connect() as conn:
+                # SQLite doesn't support DROP CONSTRAINT directly, but create_all handles new schema
+                pass
+        except Exception:
+            pass
 
 def init_db():
     with app.app_context():
@@ -270,40 +325,55 @@ def init_db():
         
         db.session.commit()
         
-        # Create default admin user
+        # Create default branch (Pusat / HQ)
+        default_branch = Branch.query.filter_by(code='PUSAT').first()
+        if not default_branch:
+            default_branch = Branch(
+                name='Cabang Pusat',
+                code='PUSAT',
+                address='Alamat cabang pusat',
+                is_active=True
+            )
+            db.session.add(default_branch)
+            db.session.commit()
+        
+        # Create default admin user (owner - no branch = sees all)
         if not User.query.filter_by(username='admin').first():
             admin_role = Role.query.filter_by(name='admin').first()
             admin = User(
                 username='admin',
                 email='admin@kasir.com',
-                full_name='Administrator',
-                force_password_change=True  # Force password change on first login
+                full_name='Owner / Administrator',
+                force_password_change=True,
+                branch_id=None  # Owner sees all branches
             )
             admin.set_password('admin123')
             admin.roles.append(admin_role)
             db.session.add(admin)
         
-        # Create default kasir user
+        # Create default kasir user (assigned to Pusat branch)
         if not User.query.filter_by(username='kasir').first():
             kasir_role = Role.query.filter_by(name='kasir').first()
             kasir = User(
                 username='kasir',
                 email='kasir@kasir.com',
                 full_name='Kasir Utama',
-                force_password_change=True  # Force password change on first login
+                force_password_change=True,
+                branch_id=default_branch.id
             )
             kasir.set_password('kasir123')
             kasir.roles.append(kasir_role)
             db.session.add(kasir)
         
-        # Create default koki user
+        # Create default koki user (assigned to Pusat branch)
         if not User.query.filter_by(username='koki').first():
             koki_role = Role.query.filter_by(name='koki').first()
             koki = User(
                 username='koki',
                 email='koki@kasir.com',
                 full_name='Koki Dapur',
-                force_password_change=True  # Force password change on first login
+                force_password_change=True,
+                branch_id=default_branch.id
             )
             koki.set_password('koki123')
             koki.roles.append(koki_role)
@@ -635,7 +705,7 @@ def dashboard():
     today = datetime.now().date()
     
     # Get only completed/paid orders today
-    today_orders = Order.query.filter(
+    today_orders = branch_filter(Order.query, Order).filter(
         db.func.date(Order.created_at) == today
     ).all()
     
@@ -668,13 +738,13 @@ def dashboard():
         popular_items = MenuItem.query.filter_by(is_popular=True).limit(6).all()
     
     # Get recent orders
-    recent_orders = Order.query.order_by(Order.created_at.desc()).limit(10).all()
+    recent_orders = branch_filter(Order.query, Order).order_by(Order.created_at.desc()).limit(10).all()
     
     # Get tables status - based on active orders
-    tables = Table.query.filter_by(is_active=True).all()
+    tables = branch_filter(Table.query, Table).filter_by(is_active=True).all()
     
     # Calculate occupied tables from current active orders
-    active_orders = Order.query.filter(
+    active_orders = branch_filter(Order.query, Order).filter(
         Order.status.in_(['pending', 'processing']),
         Order.table_id.isnot(None)
     ).all()
@@ -688,7 +758,7 @@ def dashboard():
             table.status = 'available'
     
     # Low stock items (stock <= 10)
-    low_stock_items = MenuItem.query.filter(
+    low_stock_items = branch_filter(MenuItem.query, MenuItem).filter(
         MenuItem.is_available == True,
         MenuItem.stock <= 10
     ).order_by(MenuItem.stock.asc()).all()
@@ -707,9 +777,9 @@ def dashboard():
 @login_required
 @role_required('admin', 'manager', 'kasir')
 def pos():
-    categories = Category.query.filter_by(is_active=True).order_by(Category.order).all()
-    menu_items = MenuItem.query.filter_by(is_available=True).all()
-    tables = Table.query.filter_by(is_active=True).all()
+    categories = branch_filter(Category.query, Category).filter_by(is_active=True).order_by(Category.order).all()
+    menu_items = branch_filter(MenuItem.query, MenuItem).filter_by(is_available=True).all()
+    tables = branch_filter(Table.query, Table).filter_by(is_active=True).all()
     
     return render_template('pos.html',
                          categories=categories,
@@ -737,12 +807,12 @@ def online_order(table_number):
 # API Routes
 @app.route('/api/menu')
 def api_get_menu():
-    menu_items = MenuItem.query.filter_by(is_available=True).all()
+    menu_items = branch_filter(MenuItem.query, MenuItem).filter_by(is_available=True).all()
     return jsonify([item.to_dict() for item in menu_items])
 
 @app.route('/api/menu/category/<int:category_id>')
 def api_get_menu_by_category(category_id):
-    menu_items = MenuItem.query.filter_by(category_id=category_id, is_available=True).all()
+    menu_items = branch_filter(MenuItem.query, MenuItem).filter_by(category_id=category_id, is_available=True).all()
     return jsonify([item.to_dict() for item in menu_items])
 
 # ============================================
@@ -754,7 +824,7 @@ def get_or_create_cart():
     if current_user.is_authenticated:
         cart = Cart.query.filter_by(user_id=current_user.id).first()
         if not cart:
-            cart = Cart(user_id=current_user.id)
+            cart = Cart(user_id=current_user.id, branch_id=get_user_branch_id())
             db.session.add(cart)
             db.session.commit()
     else:
@@ -935,7 +1005,8 @@ def api_create_order():
             table_id=table_id,
             customer_name=customer_name,
             order_type=order_type,
-            notes=notes
+            notes=notes,
+            branch_id=get_user_branch_id()
         )
         db.session.add(order)
         db.session.flush()
@@ -1271,7 +1342,7 @@ def api_get_stats():
     today = datetime.now().date()
     
     # Today's stats
-    today_orders = Order.query.filter(
+    today_orders = branch_filter(Order.query, Order).filter(
         db.func.date(Order.created_at) == today
     ).all()
     
@@ -1351,7 +1422,7 @@ def profile_change_password():
 @login_required
 @role_required('admin')
 def admin_users():
-    users = User.query.all()
+    users = branch_filter(User.query, User).all()
     roles = Role.query.all()
     return render_template('admin/users.html', users=users, roles=roles)
 
@@ -1372,7 +1443,8 @@ def admin_create_user():
     user = User(
         username=username,
         email=email,
-        full_name=full_name
+        full_name=full_name,
+        branch_id=request.form.get('branch_id') or get_user_branch_id()
     )
     user.set_password(password)
     
@@ -1403,8 +1475,8 @@ def admin_toggle_user(user_id):
 @login_required
 @role_required('admin', 'manager')
 def admin_menu():
-    categories = Category.query.order_by(Category.order).all()
-    menu_items = MenuItem.query.all()
+    categories = branch_filter(Category.query, Category).order_by(Category.order).all()
+    menu_items = branch_filter(MenuItem.query, MenuItem).all()
     return render_template('admin/menu.html', categories=categories, menu_items=menu_items)
 
 def allowed_file(filename):
@@ -1473,7 +1545,8 @@ def admin_create_menu():
         is_popular=is_popular,
         has_spicy_option=has_spicy_option,
         has_temperature_option=has_temperature_option,
-        image=image
+        image=image,
+        branch_id=get_user_branch_id()
     )
     
     db.session.add(menu_item)
@@ -1578,7 +1651,7 @@ def printer_station():
 @login_required
 @role_required('admin', 'manager')
 def admin_tables():
-    tables = Table.query.all()
+    tables = branch_filter(Table.query, Table).all()
     return render_template('admin/tables.html', tables=tables)
 
 @app.route('/admin/tables/<int:table_id>/qr')
@@ -1616,7 +1689,8 @@ def admin_table_add():
     table = Table(
         number=number,
         name=name or f"Meja {number}",
-        capacity=capacity
+        capacity=capacity,
+        branch_id=get_user_branch_id()
     )
     db.session.add(table)
     db.session.commit()
@@ -1674,7 +1748,7 @@ def admin_table_toggle(table_id):
 @role_required('admin', 'manager')
 def admin_discounts():
     """Discount management page"""
-    discounts = Discount.query.order_by(Discount.created_at.desc()).all()
+    discounts = branch_filter(Discount.query, Discount).order_by(Discount.created_at.desc()).all()
     return render_template('admin/discounts.html', discounts=discounts)
 
 
@@ -1724,7 +1798,8 @@ def admin_discount_create():
             usage_limit=usage_limit,
             start_date=start_date,
             end_date=end_date,
-            is_active=is_active
+            is_active=is_active,
+            branch_id=get_user_branch_id()
         )
         
         db.session.add(discount)
@@ -1845,7 +1920,7 @@ def api_validate_discount():
 def api_active_discounts():
     """Get all currently active discounts"""
     now = utc_now()
-    discounts = Discount.query.filter(
+    discounts = branch_filter(Discount.query, Discount).filter(
         Discount.is_active == True,
         (Discount.start_date == None) | (Discount.start_date <= now),
         (Discount.end_date == None) | (Discount.end_date >= now),
@@ -1995,7 +2070,7 @@ def expenses():
         filter_year, filter_month = date.today().year, date.today().month
     
     # Build query
-    query = Expense.query.filter(
+    query = branch_filter(Expense.query, Expense).filter(
         db.extract('year', Expense.date) == filter_year,
         db.extract('month', Expense.date) == filter_month
     )
@@ -2058,7 +2133,8 @@ def expense_add():
         description=description,
         amount=amount,
         notes=notes,
-        user_id=current_user.id
+        user_id=current_user.id,
+        branch_id=get_user_branch_id()
     )
     db.session.add(expense)
     db.session.commit()
@@ -2103,7 +2179,8 @@ def api_shift_open():
     shift = CashierShift(
         user_id=current_user.id,
         opening_cash=opening_cash,
-        notes=data.get('notes', '')
+        notes=data.get('notes', ''),
+        branch_id=get_user_branch_id()
     )
     db.session.add(shift)
     db.session.commit()
@@ -2167,7 +2244,7 @@ def api_kitchen_orders():
     """Get orders for kitchen display"""
     # Get orders from today that are not completed/cancelled
     today = utc_now().date()
-    orders = Order.query.filter(
+    orders = branch_filter(Order.query, Order).filter(
         Order.created_at >= datetime.combine(today, datetime.min.time()),
         Order.status.in_(['pending', 'processing'])
     ).order_by(Order.created_at.asc()).all()
@@ -2311,7 +2388,7 @@ def save_printer_status():
 @login_required
 def get_pending_prints():
     """Get all pending prints from server-side queue"""
-    pending = PendingPrint.query.filter_by(status='pending').order_by(PendingPrint.created_at).all()
+    pending = branch_filter(PendingPrint.query, PendingPrint).filter_by(status='pending').order_by(PendingPrint.created_at).all()
     return jsonify({
         'success': True,
         'pending_prints': [p.to_dict() for p in pending],
@@ -2330,7 +2407,8 @@ def add_pending_print():
         receipt_data=json.dumps(data.get('receipt_data', [])),
         copies=data.get('copies', 3),
         current_copy=data.get('current_copy', 1),
-        status='pending'
+        status='pending',
+        branch_id=get_user_branch_id()
     )
     
     db.session.add(pending)
@@ -2398,7 +2476,11 @@ def delete_pending_print(print_id):
 @login_required
 def clear_pending_prints():
     """Clear all pending prints"""
-    PendingPrint.query.filter_by(status='pending').delete()
+    bid = get_user_branch_id()
+    query = PendingPrint.query.filter_by(status='pending')
+    if bid is not None:
+        query = query.filter(PendingPrint.branch_id == bid)
+    query.delete()
     db.session.commit()
     
     return jsonify({
@@ -2603,7 +2685,7 @@ def income_report():
     start_date = datetime.strptime(start_date_str, '%Y-%m-%d')
     end_date = datetime.strptime(end_date_str, '%Y-%m-%d') + timedelta(days=1) - timedelta(seconds=1)
     
-    orders = Order.query.filter(
+    orders = branch_filter(Order.query, Order).filter(
         Order.created_at >= start_date,
         Order.created_at <= end_date
     ).all()
@@ -2642,7 +2724,7 @@ def export_pdf():
     start_date = request.args.get('start_date', datetime.now().strftime('%Y-%m-01'))
     end_date = request.args.get('end_date', datetime.now().strftime('%Y-%m-%d'))
     
-    orders = Order.query.filter(
+    orders = branch_filter(Order.query, Order).filter(
         Order.created_at >= start_date,
         Order.created_at <= end_date + ' 23:59:59'
     ).all()
@@ -2707,7 +2789,7 @@ def export_excel():
     start_date = request.args.get('start_date', datetime.now().strftime('%Y-%m-01'))
     end_date = request.args.get('end_date', datetime.now().strftime('%Y-%m-%d'))
     
-    orders = Order.query.filter(
+    orders = branch_filter(Order.query, Order).filter(
         Order.created_at >= start_date,
         Order.created_at <= end_date + ' 23:59:59'
     ).all()
@@ -2842,7 +2924,7 @@ def update_payment_status(order_id):
 def orders():
     status_filter = request.args.get('status', 'all')
     
-    query = Order.query.order_by(Order.created_at.desc())
+    query = branch_filter(Order.query, Order).order_by(Order.created_at.desc())
     
     if status_filter != 'all':
         query = query.filter_by(status=status_filter)
@@ -2899,11 +2981,11 @@ def reset_database():
 @login_required
 def api_get_notifications():
     """Get notifications for current user"""
-    notifications = Notification.query.filter(
+    notifications = branch_filter(Notification.query, Notification).filter(
         (Notification.user_id == current_user.id) | (Notification.user_id == None)
     ).order_by(Notification.created_at.desc()).limit(50).all()
     
-    unread_count = Notification.query.filter(
+    unread_count = branch_filter(Notification.query, Notification).filter(
         ((Notification.user_id == current_user.id) | (Notification.user_id == None)),
         Notification.is_read == False
     ).count()
@@ -2945,7 +3027,8 @@ def create_notification(type, title, message, user_id=None, data=None):
         title=title,
         message=message,
         user_id=user_id,
-        data=json.dumps(data) if data else None
+        data=json.dumps(data) if data else None,
+        branch_id=get_user_branch_id()
     )
     db.session.add(notification)
     db.session.commit()
