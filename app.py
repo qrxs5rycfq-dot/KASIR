@@ -3232,7 +3232,7 @@ PLATFORM_CONFIG = {
         'api_base_sandbox': 'https://api.partner-sandbox.gobiz.co.id',
         'scope': 'gofood:order:read gofood:order:write gofood:catalog:read',
         'sig_header': 'X-Callback-Token',
-        'sig_algo': 'sha512',
+        'sig_algo': 'token',
         'webhook_events': ['gofood.order.awaiting_merchant_acceptance', 'gofood.order.merchant_accepted',
                            'gofood.order.cancelled', 'gofood.order.completed',
                            'gofood.order.driver_otw_pickup', 'gofood.order.driver_arrived'],
@@ -3430,7 +3430,7 @@ def log_webhook_attempt(platform, request_obj, result, error_detail=None, ext_or
             val = request_obj.headers.get(h)
             if val:
                 if any(s in h.lower() for s in ('signature', 'secret', 'token', 'hmac', 'authorization')):
-                    relevant_headers[h] = val[:8] + '****' if len(val) > 8 else '****'
+                    relevant_headers[h] = val[:4] + '****' if len(val) > 4 else '****'
                 else:
                     relevant_headers[h] = val
         
@@ -3869,7 +3869,7 @@ def process_platform_order(platform, data, branch_id=None):
             # Match menu item: try external_id first (partner's ID), then exact name, then partial
             menu_item = None
             if item_ext_id:
-                menu_item = MenuItem.query.filter_by(id=item_ext_id).first() if item_ext_id.isdigit() else None
+                menu_item = MenuItem.query.filter_by(id=item_ext_id).first() if isinstance(item_ext_id, str) and item_ext_id.isdigit() else None
             if not menu_item:
                 menu_item = MenuItem.query.filter(
                     db.func.lower(MenuItem.name) == item_name.lower()
@@ -4202,7 +4202,7 @@ def admin_integrations():
             'store_branch_map': cfg.get('store_branch_map', ''),
             'enabled': bool(cfg.get('webhook_secret') or cfg.get('client_id')),
             'sig_header': pcfg['sig_header'],
-            'sig_algo': {'sha256': 'HMAC-SHA256', 'sha512': 'HMAC-SHA512'}.get(pcfg['sig_algo'], pcfg['sig_algo']),
+            'sig_algo': {'sha256': 'HMAC-SHA256', 'token': 'Token Comparison'}.get(pcfg['sig_algo'], pcfg['sig_algo']),
             'has_oauth': bool(pcfg.get('oauth_token_url')),
             'is_sandbox': cfg.get('is_sandbox', True),
         }
