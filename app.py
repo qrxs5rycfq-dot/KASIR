@@ -105,6 +105,16 @@ def get_user_branch_id():
         return None
     return current_user.branch_id
 
+def get_default_branch_id():
+    """Get branch_id for data creation. Returns user's branch or Pusat branch for admin/owner.
+    Ensures records always have a valid branch_id."""
+    bid = get_user_branch_id()
+    if bid is not None:
+        return bid
+    # Admin/owner: default to Pusat branch
+    pusat = Branch.query.filter_by(code='PUSAT').first()
+    return pusat.id if pusat else None
+
 def branch_filter(query, model):
     """Apply branch filter to a query. Admin/owner (branch_id=NULL) sees all data."""
     bid = get_user_branch_id()
@@ -324,6 +334,24 @@ def run_migrations():
                 conn.execute(text("ALTER TABLE branches ADD COLUMN brand_id INTEGER REFERENCES brands(id)"))
                 conn.commit()
             print("Added brand_id column to branches table")
+    
+    # Fix legacy data: assign NULL branch_id records to Pusat branch
+    if 'branches' in table_names:
+        # Table names are from a hardcoded allowlist (not user input), safe for f-string
+        allowed_tables = {'orders', 'carts', 'expenses', 'cashier_shifts', 'pending_prints', 'notifications', 'discounts', 'incomes'}
+        with db.engine.connect() as conn:
+            result = conn.execute(text("SELECT id FROM branches WHERE code = 'PUSAT' LIMIT 1"))
+            row = result.fetchone()
+            if row:
+                pusat_id = row[0]
+                for tbl in allowed_tables:
+                    if tbl in table_names:
+                        cols = [c['name'] for c in inspector.get_columns(tbl)]
+                        if 'branch_id' in cols:
+                            result = conn.execute(text(f"UPDATE {tbl} SET branch_id = :bid WHERE branch_id IS NULL"), {'bid': pusat_id})
+                            if result.rowcount > 0:
+                                print(f"Assigned {result.rowcount} {tbl} records with NULL branch_id to Pusat branch")
+                conn.commit()
 
 def init_db():
     with app.app_context():
@@ -992,7 +1020,7 @@ def get_or_create_cart():
     if current_user.is_authenticated:
         cart = Cart.query.filter_by(user_id=current_user.id).first()
         if not cart:
-            cart = Cart(user_id=current_user.id, branch_id=get_user_branch_id())
+            cart = Cart(user_id=current_user.id, branch_id=get_default_branch_id())
             db.session.add(cart)
             db.session.commit()
     else:
@@ -1174,13 +1202,13 @@ def api_create_order():
             customer_name=customer_name,
             order_type=order_type,
             notes=notes,
-            branch_id=get_user_branch_id()
+            branch_id=get_default_branch_id()
         )
         db.session.add(order)
         db.session.flush()
         
         # Add order items
-        order_branch_id = get_user_branch_id()
+        order_branch_id = get_default_branch_id()
         for item in items:
             menu_item = db.session.get(MenuItem, item.get('menu_item_id') or item.get('id'))
             if menu_item:
@@ -2031,7 +2059,7 @@ def admin_discount_create():
             start_date=start_date,
             end_date=end_date,
             is_active=is_active,
-            branch_id=get_user_branch_id()
+            branch_id=get_default_branch_id()
         )
         
         db.session.add(discount)
@@ -2609,7 +2637,7 @@ def expense_add():
         amount=amount,
         notes=notes,
         user_id=current_user.id,
-        branch_id=get_user_branch_id()
+        branch_id=get_default_branch_id()
     )
     db.session.add(expense)
     db.session.commit()
@@ -2655,7 +2683,7 @@ def api_shift_open():
         user_id=current_user.id,
         opening_cash=opening_cash,
         notes=data.get('notes', ''),
-        branch_id=get_user_branch_id()
+        branch_id=get_default_branch_id()
     )
     db.session.add(shift)
     db.session.commit()
@@ -2883,7 +2911,7 @@ def add_pending_print():
         copies=data.get('copies', 3),
         current_copy=data.get('current_copy', 1),
         status='pending',
-        branch_id=get_user_branch_id()
+        branch_id=get_default_branch_id()
     )
     
     db.session.add(pending)
@@ -3167,6 +3195,14 @@ def analytics():
     filter_brand_id = request.args.get('brand_id', '', type=str).strip()
     filter_branch_id = request.args.get('branch_id', '', type=str).strip()
     
+    # Query Pusat branch once for legacy NULL branch_id handling
+    pusat_branch = Branch.query.filter_by(code='PUSAT').first()
+    pusat_branch_id = pusat_branch.id if pusat_branch else None
+    
+    def _includes_pusat(branch_ids):
+        """Check if branch_ids list includes Pusat (for legacy NULL data handling)."""
+        return pusat_branch_id is not None and pusat_branch_id in branch_ids
+    
     def analytics_filter(query):
         """Apply branch/city/brand filter for analytics. Regular users see their branch only."""
         bid = get_user_branch_id()
@@ -3175,13 +3211,25 @@ def analytics():
             return query.filter(Order.branch_id == bid)
         # Owner: apply optional filters
         if filter_branch_id and filter_branch_id.isdigit():
-            return query.filter(Order.branch_id == int(filter_branch_id))
+            target_id = int(filter_branch_id)
+            # Also include legacy orders with NULL branch_id if filtering for Pusat
+            if target_id == pusat_branch_id:
+                return query.filter(db.or_(Order.branch_id == target_id, Order.branch_id.is_(None)))
+            return query.filter(Order.branch_id == target_id)
         if filter_brand_id and filter_brand_id.isdigit():
             branch_ids = [id for (id,) in Branch.query.with_entities(Branch.id).filter_by(brand_id=int(filter_brand_id)).all()]
-            return query.filter(Order.branch_id.in_(branch_ids)) if branch_ids else query.filter(Order.id == None)
+            if not branch_ids:
+                return query.filter(Order.id == None)
+            if _includes_pusat(branch_ids):
+                return query.filter(db.or_(Order.branch_id.in_(branch_ids), Order.branch_id.is_(None)))
+            return query.filter(Order.branch_id.in_(branch_ids))
         if filter_city_id and filter_city_id.isdigit():
             branch_ids = [id for (id,) in Branch.query.with_entities(Branch.id).filter_by(city_id=int(filter_city_id)).all()]
-            return query.filter(Order.branch_id.in_(branch_ids)) if branch_ids else query.filter(Order.id == None)
+            if not branch_ids:
+                return query.filter(Order.id == None)
+            if _includes_pusat(branch_ids):
+                return query.filter(db.or_(Order.branch_id.in_(branch_ids), Order.branch_id.is_(None)))
+            return query.filter(Order.branch_id.in_(branch_ids))
         return query  # Owner with no filter = all data
     
     def analytics_expense_filter(query):
@@ -3190,13 +3238,24 @@ def analytics():
         if bid is not None:
             return query.filter(Expense.branch_id == bid)
         if filter_branch_id and filter_branch_id.isdigit():
-            return query.filter(Expense.branch_id == int(filter_branch_id))
+            target_id = int(filter_branch_id)
+            if target_id == pusat_branch_id:
+                return query.filter(db.or_(Expense.branch_id == target_id, Expense.branch_id.is_(None)))
+            return query.filter(Expense.branch_id == target_id)
         if filter_brand_id and filter_brand_id.isdigit():
             branch_ids = [id for (id,) in Branch.query.with_entities(Branch.id).filter_by(brand_id=int(filter_brand_id)).all()]
-            return query.filter(Expense.branch_id.in_(branch_ids)) if branch_ids else query.filter(Expense.id == None)
+            if not branch_ids:
+                return query.filter(Expense.id == None)
+            if _includes_pusat(branch_ids):
+                return query.filter(db.or_(Expense.branch_id.in_(branch_ids), Expense.branch_id.is_(None)))
+            return query.filter(Expense.branch_id.in_(branch_ids))
         if filter_city_id and filter_city_id.isdigit():
             branch_ids = [id for (id,) in Branch.query.with_entities(Branch.id).filter_by(city_id=int(filter_city_id)).all()]
-            return query.filter(Expense.branch_id.in_(branch_ids)) if branch_ids else query.filter(Expense.id == None)
+            if not branch_ids:
+                return query.filter(Expense.id == None)
+            if _includes_pusat(branch_ids):
+                return query.filter(db.or_(Expense.branch_id.in_(branch_ids), Expense.branch_id.is_(None)))
+            return query.filter(Expense.branch_id.in_(branch_ids))
         return query
     
     # Helper: calculate growth percentage
@@ -3782,7 +3841,7 @@ def create_notification(type, title, message, user_id=None, data=None):
         message=message,
         user_id=user_id,
         data=json.dumps(data) if data else None,
-        branch_id=get_user_branch_id()
+        branch_id=get_default_branch_id()
     )
     db.session.add(notification)
     db.session.commit()
