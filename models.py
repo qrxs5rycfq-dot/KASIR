@@ -510,7 +510,7 @@ class Discount(db.Model):
 
 
 class City(db.Model):
-    """City/Kota model for multi-outlet hierarchy (City → Branch → Brand)"""
+    """City/Kota model for multi-outlet hierarchy. Branch belongs to a City and a Brand."""
     __tablename__ = 'cities'
     
     id = db.Column(db.Integer, primary_key=True)
@@ -537,7 +537,7 @@ class City(db.Model):
 
 
 class Brand(db.Model):
-    """Brand/Merek model for multi-outlet hierarchy (City → Branch → Brand)"""
+    """Brand/Merek model for multi-outlet hierarchy. Branch belongs to a City and a Brand."""
     __tablename__ = 'brands'
     
     id = db.Column(db.Integer, primary_key=True)

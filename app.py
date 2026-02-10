@@ -311,7 +311,8 @@ def run_migrations():
             pass
     
     # Add city_id and brand_id columns to branches table for multi-outlet hierarchy
-    if 'branches' in inspector.get_table_names():
+    table_names = inspector.get_table_names()
+    if 'branches' in table_names and 'cities' in table_names and 'brands' in table_names:
         columns = [col['name'] for col in inspector.get_columns('branches')]
         if 'city_id' not in columns:
             with db.engine.connect() as conn:
@@ -3176,15 +3177,11 @@ def analytics():
         if filter_branch_id and filter_branch_id.isdigit():
             return query.filter(Order.branch_id == int(filter_branch_id))
         if filter_brand_id and filter_brand_id.isdigit():
-            branch_ids = [b.id for b in Branch.query.filter_by(brand_id=int(filter_brand_id)).all()]
-            if branch_ids:
-                return query.filter(Order.branch_id.in_(branch_ids))
-            return query.filter(db.literal(False))
+            branch_ids = [id for (id,) in Branch.query.with_entities(Branch.id).filter_by(brand_id=int(filter_brand_id)).all()]
+            return query.filter(Order.branch_id.in_(branch_ids)) if branch_ids else query.filter(Order.id == None)
         if filter_city_id and filter_city_id.isdigit():
-            branch_ids = [b.id for b in Branch.query.filter_by(city_id=int(filter_city_id)).all()]
-            if branch_ids:
-                return query.filter(Order.branch_id.in_(branch_ids))
-            return query.filter(db.literal(False))
+            branch_ids = [id for (id,) in Branch.query.with_entities(Branch.id).filter_by(city_id=int(filter_city_id)).all()]
+            return query.filter(Order.branch_id.in_(branch_ids)) if branch_ids else query.filter(Order.id == None)
         return query  # Owner with no filter = all data
     
     def analytics_expense_filter(query):
@@ -3195,15 +3192,11 @@ def analytics():
         if filter_branch_id and filter_branch_id.isdigit():
             return query.filter(Expense.branch_id == int(filter_branch_id))
         if filter_brand_id and filter_brand_id.isdigit():
-            branch_ids = [b.id for b in Branch.query.filter_by(brand_id=int(filter_brand_id)).all()]
-            if branch_ids:
-                return query.filter(Expense.branch_id.in_(branch_ids))
-            return query.filter(db.literal(False))
+            branch_ids = [id for (id,) in Branch.query.with_entities(Branch.id).filter_by(brand_id=int(filter_brand_id)).all()]
+            return query.filter(Expense.branch_id.in_(branch_ids)) if branch_ids else query.filter(Expense.id == None)
         if filter_city_id and filter_city_id.isdigit():
-            branch_ids = [b.id for b in Branch.query.filter_by(city_id=int(filter_city_id)).all()]
-            if branch_ids:
-                return query.filter(Expense.branch_id.in_(branch_ids))
-            return query.filter(db.literal(False))
+            branch_ids = [id for (id,) in Branch.query.with_entities(Branch.id).filter_by(city_id=int(filter_city_id)).all()]
+            return query.filter(Expense.branch_id.in_(branch_ids)) if branch_ids else query.filter(Expense.id == None)
         return query
     
     # Helper: calculate growth percentage
