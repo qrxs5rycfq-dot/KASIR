@@ -22,7 +22,7 @@ from flask_limiter.util import get_remote_address
 from werkzeug.utils import secure_filename
 
 from config import config
-from models import db, User, Role, Permission, Category, MenuItem, Table, Order, OrderItem, Payment, Income, Setting, Cart, CartItem, Discount, PendingPrint, Notification, Branch, BranchMenuStock, CashierShift, Expense, ExternalOrder, WebhookLog
+from models import db, User, Role, Permission, Category, MenuItem, Table, Order, OrderItem, Payment, Income, Setting, Cart, CartItem, Discount, PendingPrint, Notification, Branch, BranchMenuStock, CashierShift, Expense, ExternalOrder, WebhookLog, City, Brand
 
 # Import USB printer module
 try:
@@ -94,6 +94,8 @@ def inject_config():
         else:
             ctx['current_branch'] = None  # Admin/owner sees all
         ctx['all_branches'] = Branch.query.filter_by(is_active=True).all()
+        ctx['all_cities'] = City.query.filter_by(is_active=True).order_by(City.name).all()
+        ctx['all_brands'] = Brand.query.filter_by(is_active=True).order_by(Brand.name).all()
         ctx['is_owner'] = current_user.branch_id is None and current_user.has_role('admin')
     return ctx
 
@@ -307,6 +309,20 @@ def run_migrations():
                 pass
         except Exception:
             pass
+    
+    # Add city_id and brand_id columns to branches table for multi-outlet hierarchy
+    if 'branches' in inspector.get_table_names():
+        columns = [col['name'] for col in inspector.get_columns('branches')]
+        if 'city_id' not in columns:
+            with db.engine.connect() as conn:
+                conn.execute(text("ALTER TABLE branches ADD COLUMN city_id INTEGER REFERENCES cities(id)"))
+                conn.commit()
+            print("Added city_id column to branches table")
+        if 'brand_id' not in columns:
+            with db.engine.connect() as conn:
+                conn.execute(text("ALTER TABLE branches ADD COLUMN brand_id INTEGER REFERENCES brands(id)"))
+                conn.commit()
+            print("Added brand_id column to branches table")
 
 def init_db():
     with app.app_context():
@@ -375,6 +391,29 @@ def init_db():
         
         db.session.commit()
         
+        # Create default city
+        default_city = City.query.filter_by(code='PUSAT').first()
+        if not default_city:
+            default_city = City(
+                name='Kota Pusat',
+                code='PUSAT',
+                is_active=True
+            )
+            db.session.add(default_city)
+            db.session.commit()
+        
+        # Create default brand
+        default_brand = Brand.query.filter_by(code='DTO').first()
+        if not default_brand:
+            default_brand = Brand(
+                name='Dapoer Teras Obor',
+                code='DTO',
+                description='Brand utama restoran',
+                is_active=True
+            )
+            db.session.add(default_brand)
+            db.session.commit()
+        
         # Create default branch (Pusat / HQ)
         default_branch = Branch.query.filter_by(code='PUSAT').first()
         if not default_branch:
@@ -382,9 +421,18 @@ def init_db():
                 name='Cabang Pusat',
                 code='PUSAT',
                 address='Alamat cabang pusat',
-                is_active=True
+                is_active=True,
+                city_id=default_city.id,
+                brand_id=default_brand.id
             )
             db.session.add(default_branch)
+            db.session.commit()
+        else:
+            # Assign city and brand to existing Pusat branch if missing
+            if default_branch.city_id is None:
+                default_branch.city_id = default_city.id
+            if default_branch.brand_id is None:
+                default_branch.brand_id = default_brand.id
             db.session.commit()
         
         # Create default admin user (owner - no branch = sees all)
@@ -2125,7 +2173,9 @@ def api_active_discounts():
 def admin_branches():
     """Branch management page"""
     branches = Branch.query.order_by(Branch.created_at.desc()).all()
-    return render_template('admin/branches.html', branches=branches, active_page='admin_branches')
+    cities = City.query.order_by(City.name).all()
+    brands = Brand.query.order_by(Brand.name).all()
+    return render_template('admin/branches.html', branches=branches, cities=cities, brands=brands, active_page='admin_branches')
 
 @app.route('/admin/branches/create', methods=['POST'])
 @login_required
@@ -2139,6 +2189,8 @@ def admin_branch_create():
     manager_name = request.form.get('manager_name', '').strip()
     opening_time = request.form.get('opening_time', '08:00').strip()
     closing_time = request.form.get('closing_time', '22:00').strip()
+    city_id = request.form.get('city_id', '').strip()
+    brand_id = request.form.get('brand_id', '').strip()
     
     if not name or not code:
         flash('Nama dan kode cabang wajib diisi.', 'danger')
@@ -2157,7 +2209,9 @@ def admin_branch_create():
         phone=phone,
         manager_name=manager_name,
         opening_time=opening_time,
-        closing_time=closing_time
+        closing_time=closing_time,
+        city_id=int(city_id) if city_id and city_id.isdigit() else None,
+        brand_id=int(brand_id) if brand_id and brand_id.isdigit() else None
     )
     db.session.add(branch)
     db.session.flush()
@@ -2198,6 +2252,10 @@ def admin_branch_edit(branch_id):
     branch.manager_name = request.form.get('manager_name', branch.manager_name).strip()
     branch.opening_time = request.form.get('opening_time', branch.opening_time).strip()
     branch.closing_time = request.form.get('closing_time', branch.closing_time).strip()
+    city_id_str = request.form.get('city_id', '').strip()
+    brand_id_str = request.form.get('brand_id', '').strip()
+    branch.city_id = int(city_id_str) if city_id_str and city_id_str.isdigit() else None
+    branch.brand_id = int(brand_id_str) if brand_id_str and brand_id_str.isdigit() else None
     
     db.session.commit()
     flash(f'Cabang "{branch.name}" berhasil diperbarui!', 'success')
@@ -2251,11 +2309,218 @@ def admin_branch_delete(branch_id):
         return redirect(url_for('admin_branches'))
     
     name = branch.name
+    # Clean up BranchMenuStock entries first (NOT NULL constraint on branch_id)
+    BranchMenuStock.query.filter_by(branch_id=branch_id).delete()
     db.session.delete(branch)
     db.session.commit()
     
     flash(f'Cabang "{name}" berhasil dihapus.', 'success')
     return redirect(url_for('admin_branches'))
+
+
+# ============================================
+# CITY & BRAND MANAGEMENT (MULTI-OUTLET)
+# ============================================
+
+@app.route('/admin/cities')
+@login_required
+@role_required('admin')
+def admin_cities():
+    """City management page"""
+    cities = City.query.order_by(City.name).all()
+    return render_template('admin/cities.html', cities=cities, active_page='admin_cities')
+
+@app.route('/admin/cities/create', methods=['POST'])
+@login_required
+@role_required('admin')
+def admin_city_create():
+    """Create a new city"""
+    name = request.form.get('name', '').strip()
+    code = request.form.get('code', '').strip().upper()
+    
+    if not name or not code:
+        flash('Nama dan kode kota wajib diisi.', 'danger')
+        return redirect(url_for('admin_cities'))
+    
+    if City.query.filter_by(code=code).first():
+        flash('Kode kota sudah digunakan.', 'danger')
+        return redirect(url_for('admin_cities'))
+    
+    city = City(name=name, code=code)
+    db.session.add(city)
+    db.session.commit()
+    
+    flash(f'Kota "{name}" berhasil ditambahkan!', 'success')
+    return redirect(url_for('admin_cities'))
+
+@app.route('/admin/cities/<int:city_id>/edit', methods=['POST'])
+@login_required
+@role_required('admin')
+def admin_city_edit(city_id):
+    """Edit a city"""
+    city = db.session.get(City, city_id)
+    if not city:
+        flash('Kota tidak ditemukan.', 'danger')
+        return redirect(url_for('admin_cities'))
+    
+    city.name = request.form.get('name', city.name).strip()
+    new_code = request.form.get('code', city.code).strip().upper()
+    
+    existing = City.query.filter(City.code == new_code, City.id != city_id).first()
+    if existing:
+        flash('Kode kota sudah digunakan.', 'danger')
+        return redirect(url_for('admin_cities'))
+    
+    city.code = new_code
+    db.session.commit()
+    flash(f'Kota "{city.name}" berhasil diperbarui!', 'success')
+    return redirect(url_for('admin_cities'))
+
+@app.route('/admin/cities/<int:city_id>/toggle', methods=['POST'])
+@login_required
+@role_required('admin')
+def admin_city_toggle(city_id):
+    """Toggle city active status"""
+    if current_user.branch_id is not None:
+        return jsonify({'success': False, 'error': 'Hanya owner yang dapat mengubah status kota'}), 403
+    
+    city = db.session.get(City, city_id)
+    if not city:
+        return jsonify({'success': False, 'error': 'Kota tidak ditemukan'}), 404
+    
+    city.is_active = not city.is_active
+    db.session.commit()
+    
+    return jsonify({
+        'success': True,
+        'is_active': city.is_active,
+        'message': f'Kota "{city.name}" sekarang {"aktif" if city.is_active else "nonaktif"}'
+    })
+
+@app.route('/admin/cities/<int:city_id>/delete', methods=['POST'])
+@login_required
+@role_required('admin')
+def admin_city_delete(city_id):
+    """Delete a city"""
+    if current_user.branch_id is not None:
+        flash('Hanya owner yang dapat menghapus kota.', 'danger')
+        return redirect(url_for('admin_cities'))
+    
+    city = db.session.get(City, city_id)
+    if not city:
+        flash('Kota tidak ditemukan.', 'danger')
+        return redirect(url_for('admin_cities'))
+    
+    if city.branches.count() > 0:
+        flash(f'Kota "{city.name}" masih memiliki {city.branches.count()} cabang. Hapus atau pindahkan cabang terlebih dahulu.', 'danger')
+        return redirect(url_for('admin_cities'))
+    
+    name = city.name
+    db.session.delete(city)
+    db.session.commit()
+    flash(f'Kota "{name}" berhasil dihapus.', 'success')
+    return redirect(url_for('admin_cities'))
+
+@app.route('/admin/brands')
+@login_required
+@role_required('admin')
+def admin_brands():
+    """Brand management page"""
+    brands = Brand.query.order_by(Brand.name).all()
+    return render_template('admin/brands.html', brands=brands, active_page='admin_brands')
+
+@app.route('/admin/brands/create', methods=['POST'])
+@login_required
+@role_required('admin')
+def admin_brand_create():
+    """Create a new brand"""
+    name = request.form.get('name', '').strip()
+    code = request.form.get('code', '').strip().upper()
+    description = request.form.get('description', '').strip()
+    
+    if not name or not code:
+        flash('Nama dan kode brand wajib diisi.', 'danger')
+        return redirect(url_for('admin_brands'))
+    
+    if Brand.query.filter_by(code=code).first():
+        flash('Kode brand sudah digunakan.', 'danger')
+        return redirect(url_for('admin_brands'))
+    
+    brand = Brand(name=name, code=code, description=description)
+    db.session.add(brand)
+    db.session.commit()
+    
+    flash(f'Brand "{name}" berhasil ditambahkan!', 'success')
+    return redirect(url_for('admin_brands'))
+
+@app.route('/admin/brands/<int:brand_id>/edit', methods=['POST'])
+@login_required
+@role_required('admin')
+def admin_brand_edit(brand_id):
+    """Edit a brand"""
+    brand = db.session.get(Brand, brand_id)
+    if not brand:
+        flash('Brand tidak ditemukan.', 'danger')
+        return redirect(url_for('admin_brands'))
+    
+    brand.name = request.form.get('name', brand.name).strip()
+    new_code = request.form.get('code', brand.code).strip().upper()
+    
+    existing = Brand.query.filter(Brand.code == new_code, Brand.id != brand_id).first()
+    if existing:
+        flash('Kode brand sudah digunakan.', 'danger')
+        return redirect(url_for('admin_brands'))
+    
+    brand.code = new_code
+    brand.description = request.form.get('description', brand.description or '').strip()
+    db.session.commit()
+    flash(f'Brand "{brand.name}" berhasil diperbarui!', 'success')
+    return redirect(url_for('admin_brands'))
+
+@app.route('/admin/brands/<int:brand_id>/toggle', methods=['POST'])
+@login_required
+@role_required('admin')
+def admin_brand_toggle(brand_id):
+    """Toggle brand active status"""
+    if current_user.branch_id is not None:
+        return jsonify({'success': False, 'error': 'Hanya owner yang dapat mengubah status brand'}), 403
+    
+    brand = db.session.get(Brand, brand_id)
+    if not brand:
+        return jsonify({'success': False, 'error': 'Brand tidak ditemukan'}), 404
+    
+    brand.is_active = not brand.is_active
+    db.session.commit()
+    
+    return jsonify({
+        'success': True,
+        'is_active': brand.is_active,
+        'message': f'Brand "{brand.name}" sekarang {"aktif" if brand.is_active else "nonaktif"}'
+    })
+
+@app.route('/admin/brands/<int:brand_id>/delete', methods=['POST'])
+@login_required
+@role_required('admin')
+def admin_brand_delete(brand_id):
+    """Delete a brand"""
+    if current_user.branch_id is not None:
+        flash('Hanya owner yang dapat menghapus brand.', 'danger')
+        return redirect(url_for('admin_brands'))
+    
+    brand = db.session.get(Brand, brand_id)
+    if not brand:
+        flash('Brand tidak ditemukan.', 'danger')
+        return redirect(url_for('admin_brands'))
+    
+    if brand.branches.count() > 0:
+        flash(f'Brand "{brand.name}" masih memiliki {brand.branches.count()} cabang. Hapus atau pindahkan cabang terlebih dahulu.', 'danger')
+        return redirect(url_for('admin_brands'))
+    
+    name = brand.name
+    db.session.delete(brand)
+    db.session.commit()
+    flash(f'Brand "{name}" berhasil dihapus.', 'success')
+    return redirect(url_for('admin_brands'))
 
 
 # ============================================
@@ -2886,7 +3151,8 @@ def reports():
 @login_required
 @role_required('admin', 'manager')
 def analytics():
-    """Comprehensive analytics dashboard with real data and percentages"""
+    """Comprehensive analytics dashboard with real data and percentages.
+    Supports filtering by city_id, brand_id, and branch_id query parameters."""
     today = datetime.now().date()
     yesterday = today - timedelta(days=1)
     week_ago = today - timedelta(days=7)
@@ -2895,6 +3161,51 @@ def analytics():
     last_month_start = (month_start - timedelta(days=1)).replace(day=1)
     last_month_end = month_start - timedelta(days=1)
     
+    # ── Filter parameters (for owner/admin: can filter by city/brand/branch) ──
+    filter_city_id = request.args.get('city_id', '', type=str).strip()
+    filter_brand_id = request.args.get('brand_id', '', type=str).strip()
+    filter_branch_id = request.args.get('branch_id', '', type=str).strip()
+    
+    def analytics_filter(query):
+        """Apply branch/city/brand filter for analytics. Regular users see their branch only."""
+        bid = get_user_branch_id()
+        if bid is not None:
+            # Non-owner: locked to their branch
+            return query.filter(Order.branch_id == bid)
+        # Owner: apply optional filters
+        if filter_branch_id and filter_branch_id.isdigit():
+            return query.filter(Order.branch_id == int(filter_branch_id))
+        if filter_brand_id and filter_brand_id.isdigit():
+            branch_ids = [b.id for b in Branch.query.filter_by(brand_id=int(filter_brand_id)).all()]
+            if branch_ids:
+                return query.filter(Order.branch_id.in_(branch_ids))
+            return query.filter(db.literal(False))
+        if filter_city_id and filter_city_id.isdigit():
+            branch_ids = [b.id for b in Branch.query.filter_by(city_id=int(filter_city_id)).all()]
+            if branch_ids:
+                return query.filter(Order.branch_id.in_(branch_ids))
+            return query.filter(db.literal(False))
+        return query  # Owner with no filter = all data
+    
+    def analytics_expense_filter(query):
+        """Apply branch/city/brand filter for expenses."""
+        bid = get_user_branch_id()
+        if bid is not None:
+            return query.filter(Expense.branch_id == bid)
+        if filter_branch_id and filter_branch_id.isdigit():
+            return query.filter(Expense.branch_id == int(filter_branch_id))
+        if filter_brand_id and filter_brand_id.isdigit():
+            branch_ids = [b.id for b in Branch.query.filter_by(brand_id=int(filter_brand_id)).all()]
+            if branch_ids:
+                return query.filter(Expense.branch_id.in_(branch_ids))
+            return query.filter(db.literal(False))
+        if filter_city_id and filter_city_id.isdigit():
+            branch_ids = [b.id for b in Branch.query.filter_by(city_id=int(filter_city_id)).all()]
+            if branch_ids:
+                return query.filter(Expense.branch_id.in_(branch_ids))
+            return query.filter(db.literal(False))
+        return query
+    
     # Helper: calculate growth percentage
     def growth_pct(current, previous):
         if previous == 0:
@@ -2902,10 +3213,10 @@ def analytics():
         return round(((current - previous) / previous) * 100, 1)
     
     # ── Today vs Yesterday ──
-    today_orders = branch_filter(Order.query, Order).filter(
+    today_orders = analytics_filter(Order.query).filter(
         db.func.date(Order.created_at) == today
     ).all()
-    yesterday_orders = branch_filter(Order.query, Order).filter(
+    yesterday_orders = analytics_filter(Order.query).filter(
         db.func.date(Order.created_at) == yesterday
     ).all()
     
@@ -2928,11 +3239,11 @@ def analytics():
     today_cancel_rate = round(today_cancelled / len(today_orders) * 100, 1) if today_orders else 0
     
     # ── This Week vs Last Week ──
-    this_week_orders = branch_filter(Order.query, Order).filter(
+    this_week_orders = analytics_filter(Order.query).filter(
         db.func.date(Order.created_at) >= week_ago,
         db.func.date(Order.created_at) <= today
     ).all()
-    last_week_orders = branch_filter(Order.query, Order).filter(
+    last_week_orders = analytics_filter(Order.query).filter(
         db.func.date(Order.created_at) >= two_weeks_ago,
         db.func.date(Order.created_at) < week_ago
     ).all()
@@ -2945,11 +3256,11 @@ def analytics():
     week_growth = growth_pct(week_revenue, last_week_revenue)
     
     # ── This Month vs Last Month ──
-    this_month_orders = branch_filter(Order.query, Order).filter(
+    this_month_orders = analytics_filter(Order.query).filter(
         db.func.date(Order.created_at) >= month_start,
         db.func.date(Order.created_at) <= today
     ).all()
-    last_month_orders = branch_filter(Order.query, Order).filter(
+    last_month_orders = analytics_filter(Order.query).filter(
         db.func.date(Order.created_at) >= last_month_start,
         db.func.date(Order.created_at) <= last_month_end
     ).all()
@@ -3053,7 +3364,7 @@ def analytics():
     
     # ── Daily Revenue Trend (last 30 days) ──
     thirty_days_ago = today - timedelta(days=30)
-    month_all_orders = branch_filter(Order.query, Order).filter(
+    month_all_orders = analytics_filter(Order.query).filter(
         db.func.date(Order.created_at) >= thirty_days_ago,
         db.func.date(Order.created_at) <= today
     ).all()
@@ -3080,13 +3391,10 @@ def analytics():
         current_day += timedelta(days=1)
     
     # ── Expenses this month ──
-    bid = get_user_branch_id()
-    expense_query = Expense.query.filter(
+    expense_query = analytics_expense_filter(Expense.query.filter(
         db.func.date(Expense.date) >= month_start,
         db.func.date(Expense.date) <= today
-    )
-    if bid:
-        expense_query = expense_query.filter(Expense.branch_id == bid)
+    ))
     total_expenses = sum(e.amount for e in expense_query.all())
     net_profit = month_revenue - total_expenses
     profit_margin = round((net_profit / month_revenue * 100), 1) if month_revenue > 0 else 0
@@ -3117,7 +3425,13 @@ def analytics():
         daily_orders_list=daily_orders_list,
         total_expenses=total_expenses,
         net_profit=net_profit,
-        profit_margin=profit_margin
+        profit_margin=profit_margin,
+        filter_city_id=filter_city_id,
+        filter_brand_id=filter_brand_id,
+        filter_branch_id=filter_branch_id,
+        cities=City.query.order_by(City.name).all(),
+        brands=Brand.query.order_by(Brand.name).all(),
+        branches=Branch.query.filter_by(is_active=True).order_by(Branch.name).all()
     )
 
 @app.route('/reports/income')

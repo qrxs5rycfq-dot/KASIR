@@ -101,6 +101,16 @@
                     <span>Cabang</span>
                 </a>
                 
+                <a href="{{ url_for('admin_cities') }}" class="sidebar-link {% if active_page == 'admin_cities' %}active{% endif %} flex items-center space-x-3 px-4 py-3 rounded-xl {% if active_page == 'admin_cities' %}text-white{% else %}text-gray-400 hover:text-white{% endif %}">
+                    <i class="fas fa-city w-5"></i>
+                    <span>Kota</span>
+                </a>
+                
+                <a href="{{ url_for('admin_brands') }}" class="sidebar-link {% if active_page == 'admin_brands' %}active{% endif %} flex items-center space-x-3 px-4 py-3 rounded-xl {% if active_page == 'admin_brands' %}text-white{% else %}text-gray-400 hover:text-white{% endif %}">
+                    <i class="fas fa-tags w-5"></i>
+                    <span>Brand</span>
+                </a>
+                
                 <a href="{{ url_for('printer_station') }}" target="_blank" class="sidebar-link flex items-center space-x-3 px-4 py-3 rounded-xl text-gray-400 hover:text-white">
                     <i class="fas fa-print w-5"></i>
                     <span>Printer Station</span>

@@ -509,6 +509,64 @@ class Discount(db.Model):
         return f'<Discount {self.code}>'
 
 
+class City(db.Model):
+    """City/Kota model for multi-outlet hierarchy (City → Branch → Brand)"""
+    __tablename__ = 'cities'
+    
+    id = db.Column(db.Integer, primary_key=True)
+    name = db.Column(db.String(100), nullable=False, unique=True)
+    code = db.Column(db.String(20), unique=True, nullable=False)
+    is_active = db.Column(db.Boolean, default=True)
+    created_at = db.Column(db.DateTime, default=utc_now)
+    updated_at = db.Column(db.DateTime, default=utc_now, onupdate=utc_now)
+    
+    branches = db.relationship('Branch', backref='city', lazy='dynamic')
+    
+    def to_dict(self):
+        return {
+            'id': self.id,
+            'name': self.name,
+            'code': self.code,
+            'is_active': self.is_active,
+            'branch_count': self.branches.count(),
+            'created_at': self.created_at.isoformat() if self.created_at else None
+        }
+    
+    def __repr__(self):
+        return f'<City {self.name}>'
+
+
+class Brand(db.Model):
+    """Brand/Merek model for multi-outlet hierarchy (City → Branch → Brand)"""
+    __tablename__ = 'brands'
+    
+    id = db.Column(db.Integer, primary_key=True)
+    name = db.Column(db.String(100), nullable=False, unique=True)
+    code = db.Column(db.String(20), unique=True, nullable=False)
+    description = db.Column(db.Text)
+    logo = db.Column(db.String(255))
+    is_active = db.Column(db.Boolean, default=True)
+    created_at = db.Column(db.DateTime, default=utc_now)
+    updated_at = db.Column(db.DateTime, default=utc_now, onupdate=utc_now)
+    
+    branches = db.relationship('Branch', backref='brand', lazy='dynamic')
+    
+    def to_dict(self):
+        return {
+            'id': self.id,
+            'name': self.name,
+            'code': self.code,
+            'description': self.description,
+            'logo': self.logo,
+            'is_active': self.is_active,
+            'branch_count': self.branches.count(),
+            'created_at': self.created_at.isoformat() if self.created_at else None
+        }
+    
+    def __repr__(self):
+        return f'<Brand {self.name}>'
+
+
 class Branch(db.Model):
     """Branch/Cabang model for multi-location restaurant management"""
     __tablename__ = 'branches'
@@ -522,6 +580,8 @@ class Branch(db.Model):
     is_active = db.Column(db.Boolean, default=True)
     opening_time = db.Column(db.String(5), default='08:00')
     closing_time = db.Column(db.String(5), default='22:00')
+    city_id = db.Column(db.Integer, db.ForeignKey('cities.id'), nullable=True)
+    brand_id = db.Column(db.Integer, db.ForeignKey('brands.id'), nullable=True)
     created_at = db.Column(db.DateTime, default=utc_now)
     updated_at = db.Column(db.DateTime, default=utc_now, onupdate=utc_now)
     
@@ -536,6 +596,10 @@ class Branch(db.Model):
             'is_active': self.is_active,
             'opening_time': self.opening_time,
             'closing_time': self.closing_time,
+            'city_id': self.city_id,
+            'city_name': self.city.name if self.city else None,
+            'brand_id': self.brand_id,
+            'brand_name': self.brand.name if self.brand else None,
             'created_at': self.created_at.isoformat() if self.created_at else None
         }
     

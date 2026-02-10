@@ -8,11 +8,42 @@
     {% include 'partials/_sidebar.html' %}
     
     <main class="flex-1 ml-0 md:ml-64 p-4 md:p-8 pt-16 md:pt-8">
-        <header class="flex items-center justify-between mb-8">
+        <header class="flex flex-col md:flex-row items-start md:items-center justify-between mb-8 gap-4">
             <div>
                 <h1 class="text-2xl font-display font-bold">Analitik</h1>
                 <p class="text-gray-400">Data lengkap performa restoran dengan persentase real</p>
             </div>
+            {% if is_owner %}
+            <!-- Filter by City / Brand / Branch -->
+            <form method="GET" action="{{ url_for('analytics') }}" class="flex flex-wrap items-center gap-2">
+                <select name="city_id" onchange="this.form.submit()"
+                        class="bg-white/5 border border-white/10 rounded-lg py-2 px-3 text-white text-sm focus:outline-none focus:ring-2 focus:ring-primary-500/50">
+                    <option value="">Semua Kota</option>
+                    {% for city in cities %}
+                    <option value="{{ city.id }}" {% if filter_city_id == city.id|string %}selected{% endif %}>{{ city.name }}</option>
+                    {% endfor %}
+                </select>
+                <select name="brand_id" onchange="this.form.submit()"
+                        class="bg-white/5 border border-white/10 rounded-lg py-2 px-3 text-white text-sm focus:outline-none focus:ring-2 focus:ring-primary-500/50">
+                    <option value="">Semua Brand</option>
+                    {% for brand in brands %}
+                    <option value="{{ brand.id }}" {% if filter_brand_id == brand.id|string %}selected{% endif %}>{{ brand.name }}</option>
+                    {% endfor %}
+                </select>
+                <select name="branch_id" onchange="this.form.submit()"
+                        class="bg-white/5 border border-white/10 rounded-lg py-2 px-3 text-white text-sm focus:outline-none focus:ring-2 focus:ring-primary-500/50">
+                    <option value="">Semua Cabang</option>
+                    {% for branch in branches %}
+                    <option value="{{ branch.id }}" {% if filter_branch_id == branch.id|string %}selected{% endif %}>{{ branch.name }}</option>
+                    {% endfor %}
+                </select>
+                {% if filter_city_id or filter_brand_id or filter_branch_id %}
+                <a href="{{ url_for('analytics') }}" class="px-3 py-2 rounded-lg bg-red-500/10 text-red-400 hover:bg-red-500/20 text-sm">
+                    <i class="fas fa-times mr-1"></i>Reset
+                </a>
+                {% endif %}
+            </form>
+            {% endif %}
         </header>
         
         <!-- KPI Cards Row 1: Today -->
