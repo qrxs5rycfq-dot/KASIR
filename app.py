@@ -8,6 +8,7 @@ from functools import wraps
 import os
 import json
 import hmac
+import random
 import qrcode
 from io import BytesIO
 import base64
@@ -3257,7 +3258,6 @@ def process_platform_order(platform, data, branch_id=None):
     
     try:
         # Generate order number with random suffix to avoid collisions
-        import random
         platform_prefix = {'grabfood': 'GRB', 'gofood': 'GOF', 'shopeefood': 'SPF'}
         random_suffix = random.randint(100, 999)
         order_number = f"{platform_prefix.get(platform, 'EXT')}{datetime.now().strftime('%Y%m%d%H%M%S')}{random_suffix}"
