@@ -1,0 +1,288 @@
+{% extends "base.html" %}
+{% set active_page = 'admin_integrations' %}
+
+{% block content %}
+<div class="p-4 md:p-8 md:ml-64 min-h-screen">
+    <div class="max-w-7xl mx-auto">
+        <!-- Header -->
+        <div class="flex items-center justify-between mb-8">
+            <div>
+                <h1 class="text-3xl font-display font-bold gradient-text">Integrasi Platform</h1>
+                <p class="text-gray-400 mt-1">Hubungkan GrabFood, GoFood, dan ShopeeFood ke sistem kasir</p>
+            </div>
+        </div>
+
+        <!-- Platform Cards -->
+        <div class="grid grid-cols-1 md:grid-cols-3 gap-6 mb-8">
+            {% for key, platform in platforms.items() %}
+            <div class="glass rounded-2xl p-6 border border-white/10">
+                <div class="flex items-center justify-between mb-4">
+                    <div class="flex items-center space-x-3">
+                        <div class="w-12 h-12 rounded-xl bg-{{ platform.color }}-500/20 flex items-center justify-center">
+                            <i class="fas {{ platform.icon }} text-{{ platform.color }}-400 text-xl"></i>
+                        </div>
+                        <div>
+                            <h3 class="font-bold text-lg">{{ platform.name }}</h3>
+                            <span class="text-xs px-2 py-0.5 rounded-full {% if platform.enabled %}bg-green-500/20 text-green-400{% else %}bg-gray-500/20 text-gray-400{% endif %}">
+                                {% if platform.enabled %}Aktif{% else %}Belum Aktif{% endif %}
+                            </span>
+                        </div>
+                    </div>
+                    <span class="text-2xl font-bold text-{{ platform.color }}-400">{{ stats.get(key, 0) }}</span>
+                </div>
+                
+                <div class="space-y-3 text-sm">
+                    <div>
+                        <label class="text-gray-400 text-xs">Webhook URL</label>
+                        <div class="flex items-center space-x-2 mt-1">
+                            <code class="flex-1 bg-white/5 px-3 py-2 rounded-lg text-xs text-gray-300 truncate" id="webhook-{{ key }}">{{ platform.webhook_url }}</code>
+                            <button onclick="copyWebhookUrl('{{ key }}', event)" class="px-3 py-2 rounded-lg bg-white/5 text-gray-400 hover:text-white hover:bg-white/10" title="Salin URL">
+                                <i class="fas fa-copy"></i>
+                            </button>
+                        </div>
+                    </div>
+                    
+                    <div>
+                        <label class="text-gray-400 text-xs">Webhook Secret</label>
+                        <div class="bg-white/5 px-3 py-2 rounded-lg text-xs text-gray-300">
+                            {% if platform.secret %}
+                            {{ platform.secret[:8] }}****{{ platform.secret[-4:] if platform.secret|length > 12 else '****' }}
+                            {% else %}
+                            <span class="text-gray-500">Belum dikonfigurasi</span>
+                            {% endif %}
+                        </div>
+                    </div>
+                    
+                    {% if platform.store_id %}
+                    <div>
+                        <label class="text-gray-400 text-xs">Store ID</label>
+                        <div class="bg-white/5 px-3 py-2 rounded-lg text-xs text-gray-300">{{ platform.store_id }}</div>
+                    </div>
+                    {% endif %}
+                </div>
+                
+                <!-- Test Webhook Button -->
+                <button onclick="testWebhook('{{ key }}')" class="mt-4 w-full py-2.5 rounded-xl bg-{{ platform.color }}-500/10 text-{{ platform.color }}-400 hover:bg-{{ platform.color }}-500/20 font-medium text-sm transition-all">
+                    <i class="fas fa-vial mr-2"></i>Test Webhook
+                </button>
+            </div>
+            {% endfor %}
+        </div>
+
+        <!-- Setup Guide -->
+        <div class="glass rounded-2xl p-6 mb-8 border border-white/10">
+            <h2 class="text-xl font-bold mb-4">
+                <i class="fas fa-book text-primary-400 mr-2"></i>Panduan Integrasi
+            </h2>
+            
+            <div class="space-y-6">
+                <div class="bg-blue-500/10 border border-blue-500/20 rounded-xl p-4">
+                    <p class="text-blue-400 font-medium mb-2"><i class="fas fa-info-circle mr-2"></i>Penting!</p>
+                    <p class="text-gray-300 text-sm">
+                        GrabFood, GoFood, dan ShopeeFood menggunakan sistem <strong>Merchant Integration</strong> yang memerlukan 
+                        pendaftaran sebagai mitra resmi. Setelah terdaftar, Anda akan mendapatkan akses untuk mengkonfigurasi webhook 
+                        yang akan mengirim pesanan otomatis ke sistem kasir ini.
+                    </p>
+                </div>
+                
+                <div class="grid grid-cols-1 md:grid-cols-3 gap-6">
+                    <!-- GrabFood -->
+                    <div class="bg-white/5 rounded-xl p-4">
+                        <h3 class="font-bold text-green-400 mb-3"><i class="fas fa-motorcycle mr-2"></i>GrabFood</h3>
+                        <ol class="space-y-2 text-sm text-gray-300">
+                            <li>1. Daftar sebagai merchant di <strong>GrabMerchant Portal</strong></li>
+                            <li>2. Akses menu <strong>Developer Settings</strong></li>
+                            <li>3. Masukkan <strong>Webhook URL</strong> di atas ke kolom Order Notification URL</li>
+                            <li>4. Salin <strong>Webhook Secret</strong> dari portal</li>
+                            <li>5. Set environment variable:<br>
+                                <code class="text-xs bg-white/5 px-2 py-1 rounded mt-1 inline-block">GRABFOOD_WEBHOOK_SECRET=secret_anda</code>
+                            </li>
+                            <li>6. Pesanan akan otomatis masuk dan tercetak!</li>
+                        </ol>
+                    </div>
+                    
+                    <!-- GoFood -->
+                    <div class="bg-white/5 rounded-xl p-4">
+                        <h3 class="font-bold text-red-400 mb-3"><i class="fas fa-utensils mr-2"></i>GoFood</h3>
+                        <ol class="space-y-2 text-sm text-gray-300">
+                            <li>1. Daftar sebagai mitra di <strong>GoBiz Dashboard</strong></li>
+                            <li>2. Akses <strong>API Integration</strong> settings</li>
+                            <li>3. Masukkan <strong>Webhook URL</strong> di atas ke kolom notification URL</li>
+                            <li>4. Salin <strong>API Key/Secret</strong> dari dashboard</li>
+                            <li>5. Set environment variable:<br>
+                                <code class="text-xs bg-white/5 px-2 py-1 rounded mt-1 inline-block">GOFOOD_WEBHOOK_SECRET=secret_anda</code>
+                            </li>
+                            <li>6. Pesanan akan otomatis masuk dan tercetak!</li>
+                        </ol>
+                    </div>
+                    
+                    <!-- ShopeeFood -->
+                    <div class="bg-white/5 rounded-xl p-4">
+                        <h3 class="font-bold text-orange-400 mb-3"><i class="fas fa-shopping-bag mr-2"></i>ShopeeFood</h3>
+                        <ol class="space-y-2 text-sm text-gray-300">
+                            <li>1. Daftar sebagai merchant di <strong>Shopee Partner Portal</strong></li>
+                            <li>2. Akses <strong>Webhook Configuration</strong></li>
+                            <li>3. Masukkan <strong>Webhook URL</strong> di atas ke kolom Order Webhook</li>
+                            <li>4. Salin <strong>Webhook Secret</strong> dari portal</li>
+                            <li>5. Set environment variable:<br>
+                                <code class="text-xs bg-white/5 px-2 py-1 rounded mt-1 inline-block">SHOPEEFOOD_WEBHOOK_SECRET=secret_anda</code>
+                            </li>
+                            <li>6. Pesanan akan otomatis masuk dan tercetak!</li>
+                        </ol>
+                    </div>
+                </div>
+                
+                <div class="bg-white/5 rounded-xl p-4">
+                    <h3 class="font-bold text-gray-200 mb-2"><i class="fas fa-cog mr-2"></i>Environment Variables</h3>
+                    <p class="text-gray-400 text-sm mb-3">Tambahkan variable berikut di file <code>.env</code> atau environment server Anda:</p>
+                    <pre class="bg-black/30 rounded-lg p-4 text-sm text-gray-300 overflow-x-auto">
+# GrabFood Integration
+GRABFOOD_WEBHOOK_SECRET=your_grabfood_secret_here
+GRABFOOD_STORE_ID=your_store_id
+
+# GoFood Integration
+GOFOOD_WEBHOOK_SECRET=your_gofood_secret_here
+GOFOOD_STORE_ID=your_store_id
+
+# ShopeeFood Integration
+SHOPEEFOOD_WEBHOOK_SECRET=your_shopeefood_secret_here
+SHOPEEFOOD_STORE_ID=your_store_id</pre>
+                </div>
+
+                <div class="bg-white/5 rounded-xl p-4">
+                    <h3 class="font-bold text-gray-200 mb-2"><i class="fas fa-print mr-2"></i>Auto-Print</h3>
+                    <p class="text-gray-400 text-sm">
+                        Setiap pesanan dari platform food delivery akan <strong>otomatis dicetak</strong> melalui Printer Station.
+                        Pastikan <strong>Printer Station</strong> tetap terbuka di browser untuk menerima pesanan secara otomatis.
+                        Setiap pesanan dicetak <strong>2 rangkap</strong> (kasir + dapur).
+                    </p>
+                </div>
+
+                <div class="bg-white/5 rounded-xl p-4">
+                    <h3 class="font-bold text-gray-200 mb-2"><i class="fas fa-code-branch mr-2"></i>Multi-Cabang</h3>
+                    <p class="text-gray-400 text-sm">
+                        Untuk multi-cabang, setiap cabang harus menggunakan <strong>Webhook URL terpisah</strong> yang sama, tetapi dengan header 
+                        <code class="bg-black/30 px-1 rounded">X-Branch-Code</code> yang berisi kode cabang (contoh: <code class="bg-black/30 px-1 rounded">PUSAT</code>, <code class="bg-black/30 px-1 rounded">CBG-S</code>).
+                        Jika tidak ada header, pesanan akan masuk ke cabang Pusat.
+                    </p>
+                </div>
+            </div>
+        </div>
+
+        <!-- Recent External Orders -->
+        <div class="glass rounded-2xl p-6 border border-white/10">
+            <h2 class="text-xl font-bold mb-4">
+                <i class="fas fa-history text-primary-400 mr-2"></i>Pesanan Terbaru dari Platform
+            </h2>
+            
+            {% if recent_orders %}
+            <div class="overflow-x-auto">
+                <table class="w-full text-sm">
+                    <thead>
+                        <tr class="text-gray-400 border-b border-white/10">
+                            <th class="text-left py-3 px-4">Platform</th>
+                            <th class="text-left py-3 px-4">External ID</th>
+                            <th class="text-left py-3 px-4">Order #</th>
+                            <th class="text-left py-3 px-4">Status</th>
+                            <th class="text-left py-3 px-4">Waktu</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        {% for ext in recent_orders %}
+                        <tr class="border-b border-white/5 hover:bg-white/5">
+                            <td class="py-3 px-4">
+                                {% if ext.platform == 'grabfood' %}
+                                <span class="text-green-400"><i class="fas fa-motorcycle mr-1"></i>GrabFood</span>
+                                {% elif ext.platform == 'gofood' %}
+                                <span class="text-red-400"><i class="fas fa-utensils mr-1"></i>GoFood</span>
+                                {% elif ext.platform == 'shopeefood' %}
+                                <span class="text-orange-400"><i class="fas fa-shopping-bag mr-1"></i>ShopeeFood</span>
+                                {% else %}
+                                <span class="text-gray-400">{{ ext.platform }}</span>
+                                {% endif %}
+                            </td>
+                            <td class="py-3 px-4 text-gray-300 font-mono text-xs">{{ ext.external_order_id }}</td>
+                            <td class="py-3 px-4">
+                                {% if ext.order %}
+                                <a href="{{ url_for('orders') }}" class="text-primary-400 hover:underline">{{ ext.order.order_number }}</a>
+                                {% else %}
+                                <span class="text-gray-500">-</span>
+                                {% endif %}
+                            </td>
+                            <td class="py-3 px-4">
+                                {% if ext.status == 'processed' %}
+                                <span class="px-2 py-1 rounded-full text-xs bg-green-500/20 text-green-400">Diproses</span>
+                                {% elif ext.status == 'received' %}
+                                <span class="px-2 py-1 rounded-full text-xs bg-yellow-500/20 text-yellow-400">Diterima</span>
+                                {% elif ext.status == 'failed' %}
+                                <span class="px-2 py-1 rounded-full text-xs bg-red-500/20 text-red-400" title="{{ ext.error_message }}">Gagal</span>
+                                {% endif %}
+                            </td>
+                            <td class="py-3 px-4 text-gray-400 text-xs">{{ ext.created_at.strftime('%d/%m/%Y %H:%M') if ext.created_at else '-' }}</td>
+                        </tr>
+                        {% endfor %}
+                    </tbody>
+                </table>
+            </div>
+            {% else %}
+            <div class="text-center py-12 text-gray-400">
+                <i class="fas fa-inbox text-4xl mb-3"></i>
+                <p>Belum ada pesanan dari platform food delivery</p>
+                <p class="text-sm mt-1">Pesanan akan muncul di sini setelah integrasi dikonfigurasi</p>
+            </div>
+            {% endif %}
+        </div>
+    </div>
+</div>
+
+<script>
+function copyWebhookUrl(platform, event) {
+    const url = document.getElementById('webhook-' + platform).textContent.trim();
+    navigator.clipboard.writeText(url).then(() => {
+        const btn = event.target.closest('button');
+        const icon = btn.querySelector('i');
+        icon.className = 'fas fa-check text-green-400';
+        setTimeout(() => { icon.className = 'fas fa-copy'; }, 2000);
+    });
+}
+
+function testWebhook(platform) {
+    const testData = {
+        order_id: 'TEST-' + Date.now(),
+        customer_name: 'Test Customer',
+        items: [
+            { name: 'Nasi Goreng Special', quantity: 1, price: 35000 },
+            { name: 'Es Teh Manis', quantity: 2, price: 8000 }
+        ],
+        notes: 'Test order dari panel admin'
+    };
+    
+    if (platform === 'grabfood') {
+        testData.eater = { name: testData.customer_name };
+    } else if (platform === 'gofood') {
+        testData.customer = { name: testData.customer_name };
+    } else if (platform === 'shopeefood') {
+        testData.buyer = { name: testData.customer_name };
+        testData.order_code = testData.order_id;
+    }
+    
+    fetch('/api/webhook/' + platform, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(testData)
+    })
+    .then(r => r.json())
+    .then(data => {
+        if (data.success) {
+            alert('✅ Test berhasil! Pesanan test telah dibuat dan dikirim ke printer.\n\nOrder ID: ' + (data.order_id || '-'));
+            location.reload();
+        } else {
+            alert('❌ Test gagal: ' + (data.error || data.message || 'Unknown error'));
+        }
+    })
+    .catch(err => {
+        alert('❌ Error: ' + err.message);
+    });
+}
+</script>
+{% endblock %}

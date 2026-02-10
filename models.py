@@ -189,6 +189,7 @@ class Order(db.Model):
     table_id = db.Column(db.Integer, db.ForeignKey('tables.id'))
     customer_name = db.Column(db.String(100))
     order_type = db.Column(db.String(20), default='dine_in')  # dine_in, takeaway, online
+    source = db.Column(db.String(30), default='pos')  # pos, grabfood, gofood, shopeefood, online
     status = db.Column(db.String(20), default='pending')  # pending, processing, completed, cancelled
     subtotal = db.Column(db.Integer, default=0)
     tax = db.Column(db.Integer, default=0)
@@ -215,6 +216,7 @@ class Order(db.Model):
             'customer_name': self.customer_name,
             'table': self.table.number if self.table else None,
             'order_type': self.order_type,
+            'source': self.source,
             'status': self.status,
             'subtotal': self.subtotal,
             'tax': self.tax,
@@ -711,3 +713,37 @@ class PendingPrint(db.Model):
     
     def __repr__(self):
         return f'<PendingPrint {self.id} order={self.order_id} status={self.status}>'
+
+
+class ExternalOrder(db.Model):
+    """Track orders received from external food delivery platforms"""
+    __tablename__ = 'external_orders'
+    
+    id = db.Column(db.Integer, primary_key=True)
+    platform = db.Column(db.String(30), nullable=False)  # grabfood, gofood, shopeefood
+    external_order_id = db.Column(db.String(100), nullable=False)
+    order_id = db.Column(db.Integer, db.ForeignKey('orders.id'), nullable=True)
+    raw_data = db.Column(db.Text)  # Store original webhook payload as JSON
+    status = db.Column(db.String(30), default='received')  # received, processed, failed
+    error_message = db.Column(db.Text, nullable=True)
+    branch_id = db.Column(db.Integer, db.ForeignKey('branches.id'), nullable=True)
+    created_at = db.Column(db.DateTime, default=utc_now)
+    processed_at = db.Column(db.DateTime, nullable=True)
+    
+    order = db.relationship('Order', backref=db.backref('external_order', uselist=False))
+    branch = db.relationship('Branch', backref=db.backref('external_orders', lazy='dynamic'))
+    
+    def to_dict(self):
+        return {
+            'id': self.id,
+            'platform': self.platform,
+            'external_order_id': self.external_order_id,
+            'order_id': self.order_id,
+            'status': self.status,
+            'error_message': self.error_message,
+            'created_at': self.created_at.isoformat() if self.created_at else None,
+            'processed_at': self.processed_at.isoformat() if self.processed_at else None
+        }
+    
+    def __repr__(self):
+        return f'<ExternalOrder {self.platform}:{self.external_order_id}>'

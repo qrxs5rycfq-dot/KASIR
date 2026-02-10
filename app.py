@@ -7,6 +7,7 @@ def utc_now():
 from functools import wraps
 import os
 import json
+import hmac
 import qrcode
 from io import BytesIO
 import base64
@@ -19,7 +20,7 @@ from flask_limiter.util import get_remote_address
 from werkzeug.utils import secure_filename
 
 from config import config
-from models import db, User, Role, Permission, Category, MenuItem, Table, Order, OrderItem, Payment, Income, Setting, Cart, CartItem, Discount, PendingPrint, Notification, Branch, BranchMenuStock, CashierShift, Expense
+from models import db, User, Role, Permission, Category, MenuItem, Table, Order, OrderItem, Payment, Income, Setting, Cart, CartItem, Discount, PendingPrint, Notification, Branch, BranchMenuStock, CashierShift, Expense, ExternalOrder
 
 # Import USB printer module
 try:
@@ -286,6 +287,15 @@ def run_migrations():
                     conn.execute(text(f"ALTER TABLE {tbl_name} ADD COLUMN {col_name} INTEGER REFERENCES branches(id)"))
                     conn.commit()
                 print(f"Added {col_name} column to {tbl_name} table")
+    
+    # Add source column to orders table for tracking order origin
+    if 'orders' in inspector.get_table_names():
+        columns = [col['name'] for col in inspector.get_columns('orders')]
+        if 'source' not in columns:
+            with db.engine.connect() as conn:
+                conn.execute(text("ALTER TABLE orders ADD COLUMN source VARCHAR(30) DEFAULT 'pos'"))
+                conn.commit()
+            print("Added source column to orders table")
     
     # Remove unique constraint on tables.number if it exists (now scoped per branch)
     if 'tables' in inspector.get_table_names():
@@ -3183,6 +3193,359 @@ def create_notification(type, title, message, user_id=None, data=None):
     db.session.add(notification)
     db.session.commit()
     return notification
+
+
+# ============================================
+# FOOD DELIVERY PLATFORM INTEGRATION
+# ============================================
+
+def verify_webhook_secret(platform, request):
+    """Verify webhook secret/signature for food delivery platforms"""
+    expected_secret = app.config.get(f'{platform.upper()}_WEBHOOK_SECRET', '')
+    if not expected_secret:
+        return True  # No secret configured, skip verification
+    
+    # Check header-based secret
+    provided_secret = request.headers.get('X-Webhook-Secret', '') or request.headers.get('Authorization', '').replace('Bearer ', '')
+    
+    if not provided_secret:
+        return False
+    
+    return hmac.compare_digest(provided_secret, expected_secret)
+
+
+def process_platform_order(platform, data, branch_id=None):
+    """Process an incoming order from a food delivery platform and create internal order + auto-print"""
+    
+    # Extract order data based on platform format
+    if platform == 'grabfood':
+        external_id = data.get('order_id') or data.get('orderID', '')
+        customer_name = data.get('eater', {}).get('name', '') or data.get('customer_name', f'GrabFood #{external_id[-6:]}')
+        items_data = data.get('items', []) or data.get('order_items', [])
+        notes = data.get('special_instructions', '') or data.get('notes', '')
+    elif platform == 'gofood':
+        external_id = data.get('order_id') or data.get('id', '')
+        customer_name = data.get('customer', {}).get('name', '') or data.get('customer_name', f'GoFood #{external_id[-6:]}')
+        items_data = data.get('items', []) or data.get('order_items', [])
+        notes = data.get('notes', '') or data.get('special_instructions', '')
+    elif platform == 'shopeefood':
+        external_id = data.get('order_id') or data.get('order_code', '')
+        customer_name = data.get('buyer', {}).get('name', '') or data.get('customer_name', f'ShopeeFood #{external_id[-6:]}')
+        items_data = data.get('items', []) or data.get('order_items', [])
+        notes = data.get('note', '') or data.get('notes', '')
+    else:
+        return None, 'Platform tidak dikenal'
+    
+    if not external_id:
+        return None, 'Order ID tidak ditemukan'
+    
+    # Check for duplicate order
+    existing = ExternalOrder.query.filter_by(platform=platform, external_order_id=str(external_id)).first()
+    if existing:
+        return existing, 'Order sudah diproses sebelumnya'
+    
+    # Create ExternalOrder record
+    ext_order = ExternalOrder(
+        platform=platform,
+        external_order_id=str(external_id),
+        raw_data=json.dumps(data),
+        status='received',
+        branch_id=branch_id
+    )
+    db.session.add(ext_order)
+    db.session.flush()
+    
+    try:
+        # Generate order number with random suffix to avoid collisions
+        import random
+        platform_prefix = {'grabfood': 'GRB', 'gofood': 'GOF', 'shopeefood': 'SPF'}
+        random_suffix = random.randint(100, 999)
+        order_number = f"{platform_prefix.get(platform, 'EXT')}{datetime.now().strftime('%Y%m%d%H%M%S')}{random_suffix}"
+        
+        # Create internal Order
+        platform_labels = {'grabfood': 'GrabFood', 'gofood': 'GoFood', 'shopeefood': 'ShopeeFood'}
+        order = Order(
+            order_number=order_number,
+            customer_name=customer_name,
+            order_type='online',
+            source=platform,
+            status='processing',
+            notes=f"[{platform_labels.get(platform, platform)}] {notes}".strip(),
+            branch_id=branch_id
+        )
+        db.session.add(order)
+        db.session.flush()
+        
+        # Process order items - try to match with existing menu items
+        total = 0
+        order_items_text = []
+        for item_data in items_data:
+            item_name = item_data.get('name', '') or item_data.get('item_name', 'Item')
+            item_qty = int(item_data.get('quantity', 1) or item_data.get('qty', 1))
+            item_price = int(item_data.get('price', 0) or item_data.get('unit_price', 0))
+            item_notes = item_data.get('notes', '') or item_data.get('special_instructions', '')
+            
+            # Try to match with existing menu item by name
+            menu_item = MenuItem.query.filter(
+                MenuItem.name.ilike(f'%{item_name}%')
+            ).first()
+            
+            if menu_item and item_price == 0:
+                item_price = menu_item.price
+            
+            subtotal = item_price * item_qty
+            total += subtotal
+            
+            order_item = OrderItem(
+                order_id=order.id,
+                menu_item_id=menu_item.id if menu_item else None,
+                name=item_name,
+                price=item_price,
+                quantity=item_qty,
+                subtotal=subtotal,
+                notes=item_notes,
+                item_status='pending'
+            )
+            db.session.add(order_item)
+            order_items_text.append(f"{item_qty}x {item_name}")
+        
+        # Set order totals
+        order.subtotal = total
+        order.total = total
+        
+        # Create payment record (already paid via platform)
+        payment = Payment(
+            order_id=order.id,
+            payment_method=platform,
+            amount=total,
+            paid_amount=total,
+            status='paid',
+            paid_at=utc_now()
+        )
+        db.session.add(payment)
+        
+        # Link external order
+        ext_order.order_id = order.id
+        ext_order.status = 'processed'
+        ext_order.processed_at = utc_now()
+        
+        # Create notification
+        total_formatted = f"{total:,}".replace(',', '.')
+        create_notification(
+            type='order_new',
+            title=f'Pesanan {platform_labels.get(platform, platform)}!',
+            message=f'Order #{order_number} - {customer_name} - Rp {total_formatted}',
+            data={'order_id': order.id, 'order_number': order_number, 'platform': platform}
+        )
+        
+        # Auto-print: Create PendingPrint entry
+        receipt_data = [
+            {"type": "text", "value": "================================", "align": "center"},
+            {"type": "text", "value": platform_labels.get(platform, platform).upper(), "align": "center", "bold": True, "size": "large"},
+            {"type": "text", "value": "================================", "align": "center"},
+            {"type": "text", "value": f"Order: #{order_number}", "bold": True},
+            {"type": "text", "value": f"Pelanggan: {customer_name}"},
+            {"type": "text", "value": f"Waktu: {datetime.now().strftime('%d/%m/%Y %H:%M')}"},
+            {"type": "text", "value": "--------------------------------", "align": "center"},
+        ]
+        
+        for item_data in items_data:
+            item_name = item_data.get('name', '') or item_data.get('item_name', 'Item')
+            item_qty = int(item_data.get('quantity', 1) or item_data.get('qty', 1))
+            item_price = int(item_data.get('price', 0) or item_data.get('unit_price', 0))
+            item_notes = item_data.get('notes', '') or item_data.get('special_instructions', '')
+            receipt_data.append({"type": "text", "value": f"{item_qty}x {item_name}"})
+            if item_price > 0:
+                price_formatted = f"Rp {item_price * item_qty:,}".replace(',', '.')
+                receipt_data.append({"type": "text", "value": f"   {price_formatted}", "align": "right"})
+            if item_notes:
+                receipt_data.append({"type": "text", "value": f"   Catatan: {item_notes}"})
+        
+        receipt_data.extend([
+            {"type": "text", "value": "--------------------------------", "align": "center"},
+            {"type": "text", "value": f"TOTAL: Rp {total:,}".replace(',', '.'), "bold": True, "align": "right"},
+            {"type": "text", "value": "================================", "align": "center"},
+        ])
+        
+        if notes:
+            receipt_data.append({"type": "text", "value": f"Catatan: {notes}"})
+        
+        receipt_data.append({"type": "text", "value": ""})
+        receipt_data.append({"type": "cut"})
+        
+        pending_print = PendingPrint(
+            order_id=order.id,
+            receipt_data=json.dumps(receipt_data),
+            copies=2,
+            status='pending',
+            branch_id=branch_id
+        )
+        db.session.add(pending_print)
+        
+        db.session.commit()
+        return ext_order, None
+        
+    except Exception as e:
+        ext_order.status = 'failed'
+        ext_order.error_message = str(e)
+        db.session.commit()
+        return ext_order, str(e)
+
+
+def resolve_branch_from_request():
+    """Resolve branch_id from request headers, defaulting to Pusat"""
+    branch_id = None
+    branch_code = request.headers.get('X-Branch-Code', '')
+    if branch_code:
+        branch = Branch.query.filter_by(code=branch_code, is_active=True).first()
+        if branch:
+            branch_id = branch.id
+    if not branch_id:
+        pusat = Branch.query.filter_by(code='PUSAT').first()
+        if pusat:
+            branch_id = pusat.id
+    return branch_id
+
+
+@csrf.exempt
+@app.route('/api/webhook/grabfood', methods=['POST'])
+@limiter.limit("30 per minute")
+def webhook_grabfood():
+    """Webhook endpoint for GrabFood orders"""
+    if not verify_webhook_secret('grabfood', request):
+        return jsonify({'error': 'Unauthorized'}), 401
+    
+    data = request.get_json(silent=True)
+    if not data:
+        return jsonify({'error': 'Invalid JSON payload'}), 400
+    
+    branch_id = resolve_branch_from_request()
+    ext_order, error = process_platform_order('grabfood', data, branch_id)
+    
+    if error and not ext_order:
+        return jsonify({'success': False, 'error': error}), 400
+    if error:
+        return jsonify({'success': True, 'message': error, 'external_order_id': ext_order.id}), 200
+    
+    return jsonify({
+        'success': True,
+        'message': 'Order received and processed',
+        'order_id': ext_order.order_id,
+        'external_order_id': ext_order.id
+    }), 200
+
+
+@csrf.exempt
+@app.route('/api/webhook/gofood', methods=['POST'])
+@limiter.limit("30 per minute")
+def webhook_gofood():
+    """Webhook endpoint for GoFood orders"""
+    if not verify_webhook_secret('gofood', request):
+        return jsonify({'error': 'Unauthorized'}), 401
+    
+    data = request.get_json(silent=True)
+    if not data:
+        return jsonify({'error': 'Invalid JSON payload'}), 400
+    
+    branch_id = resolve_branch_from_request()
+    ext_order, error = process_platform_order('gofood', data, branch_id)
+    
+    if error and not ext_order:
+        return jsonify({'success': False, 'error': error}), 400
+    if error:
+        return jsonify({'success': True, 'message': error, 'external_order_id': ext_order.id}), 200
+    
+    return jsonify({
+        'success': True,
+        'message': 'Order received and processed',
+        'order_id': ext_order.order_id,
+        'external_order_id': ext_order.id
+    }), 200
+
+
+@csrf.exempt
+@app.route('/api/webhook/shopeefood', methods=['POST'])
+@limiter.limit("30 per minute")
+def webhook_shopeefood():
+    """Webhook endpoint for ShopeeFood orders"""
+    if not verify_webhook_secret('shopeefood', request):
+        return jsonify({'error': 'Unauthorized'}), 401
+    
+    data = request.get_json(silent=True)
+    if not data:
+        return jsonify({'error': 'Invalid JSON payload'}), 400
+    
+    branch_id = resolve_branch_from_request()
+    ext_order, error = process_platform_order('shopeefood', data, branch_id)
+    
+    if error and not ext_order:
+        return jsonify({'success': False, 'error': error}), 400
+    if error:
+        return jsonify({'success': True, 'message': error, 'external_order_id': ext_order.id}), 200
+    
+    return jsonify({
+        'success': True,
+        'message': 'Order received and processed',
+        'order_id': ext_order.order_id,
+        'external_order_id': ext_order.id
+    }), 200
+
+
+@app.route('/admin/integrations')
+@login_required
+@role_required('admin')
+def admin_integrations():
+    """Food delivery platform integration settings"""
+    platforms = {
+        'grabfood': {
+            'name': 'GrabFood',
+            'icon': 'fa-motorcycle',
+            'color': 'green',
+            'webhook_url': request.url_root.rstrip('/') + '/api/webhook/grabfood',
+            'secret': app.config.get('GRABFOOD_WEBHOOK_SECRET', ''),
+            'store_id': app.config.get('GRABFOOD_STORE_ID', ''),
+            'enabled': bool(app.config.get('GRABFOOD_WEBHOOK_SECRET', '')),
+        },
+        'gofood': {
+            'name': 'GoFood',
+            'icon': 'fa-utensils',
+            'color': 'red',
+            'webhook_url': request.url_root.rstrip('/') + '/api/webhook/gofood',
+            'secret': app.config.get('GOFOOD_WEBHOOK_SECRET', ''),
+            'store_id': app.config.get('GOFOOD_STORE_ID', ''),
+            'enabled': bool(app.config.get('GOFOOD_WEBHOOK_SECRET', '')),
+        },
+        'shopeefood': {
+            'name': 'ShopeeFood',
+            'icon': 'fa-shopping-bag',
+            'color': 'orange',
+            'webhook_url': request.url_root.rstrip('/') + '/api/webhook/shopeefood',
+            'secret': app.config.get('SHOPEEFOOD_WEBHOOK_SECRET', ''),
+            'store_id': app.config.get('SHOPEEFOOD_STORE_ID', ''),
+            'enabled': bool(app.config.get('SHOPEEFOOD_WEBHOOK_SECRET', '')),
+        }
+    }
+    
+    # Get recent external orders
+    recent_orders = ExternalOrder.query.order_by(ExternalOrder.created_at.desc()).limit(20).all()
+    
+    # Stats
+    from sqlalchemy import func
+    today = datetime.now().date()
+    today_stats = db.session.query(
+        ExternalOrder.platform,
+        func.count(ExternalOrder.id).label('count')
+    ).filter(
+        func.date(ExternalOrder.created_at) == today
+    ).group_by(ExternalOrder.platform).all()
+    
+    stats = {s.platform: s.count for s in today_stats}
+    
+    return render_template('admin/integrations.html',
+                         platforms=platforms,
+                         recent_orders=recent_orders,
+                         stats=stats,
+                         active_page='admin_integrations')
 
 
 # ========== PAYMENT GATEWAY ADMIN ==========
