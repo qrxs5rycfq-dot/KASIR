@@ -19,7 +19,7 @@ from flask_limiter.util import get_remote_address
 from werkzeug.utils import secure_filename
 
 from config import config
-from models import db, User, Role, Permission, Category, MenuItem, Table, Order, OrderItem, Payment, Income, Setting, Cart, CartItem, Discount, PendingPrint, Notification, Branch, CashierShift, Expense
+from models import db, User, Role, Permission, Category, MenuItem, Table, Order, OrderItem, Payment, Income, Setting, Cart, CartItem, Discount, PendingPrint, Notification, Branch, BranchMenuStock, CashierShift, Expense
 
 # Import USB printer module
 try:
@@ -106,6 +106,44 @@ def branch_filter(query, model):
     if bid is not None:
         return query.filter(model.branch_id == bid)
     return query
+
+def get_branch_stock(menu_item_id, branch_id):
+    """Get BranchMenuStock for a menu item at a specific branch. Creates default if missing."""
+    if branch_id is None:
+        return None
+    bms = BranchMenuStock.query.filter_by(branch_id=branch_id, menu_item_id=menu_item_id).first()
+    if not bms:
+        bms = BranchMenuStock(branch_id=branch_id, menu_item_id=menu_item_id, stock=100, is_available=True)
+        db.session.add(bms)
+        db.session.flush()
+    return bms
+
+def get_menu_with_branch_stock(menu_items, branch_id):
+    """Attach per-branch stock/availability to menu item dicts. Returns list of dicts."""
+    if branch_id is None:
+        # Owner sees global data – use MenuItem's own stock as fallback
+        return [item.to_dict() for item in menu_items]
+    
+    # Batch-load all branch stock for this branch
+    item_ids = [item.id for item in menu_items]
+    stocks = {bms.menu_item_id: bms for bms in
+              BranchMenuStock.query.filter(
+                  BranchMenuStock.branch_id == branch_id,
+                  BranchMenuStock.menu_item_id.in_(item_ids)
+              ).all()} if item_ids else {}
+    
+    result = []
+    for item in menu_items:
+        d = item.to_dict()
+        bms = stocks.get(item.id)
+        if bms:
+            d['stock'] = bms.stock
+            d['is_available'] = bms.is_available
+        else:
+            d['stock'] = 100  # default
+            d['is_available'] = True
+        result.append(d)
+    return result
 
 # Permission decorator
 def permission_required(permission):
@@ -415,6 +453,15 @@ def init_db():
                 db.session.add(table)
         
         db.session.commit()
+        
+        # Create BranchMenuStock entries for default branch
+        all_menu_items = MenuItem.query.all()
+        for mi in all_menu_items:
+            if not BranchMenuStock.query.filter_by(branch_id=default_branch.id, menu_item_id=mi.id).first():
+                bms = BranchMenuStock(branch_id=default_branch.id, menu_item_id=mi.id, stock=100, is_available=True)
+                db.session.add(bms)
+        
+        db.session.commit()
         print("Database initialized successfully!")
 
 def seed_menu_items(branch_id=None):
@@ -578,7 +625,10 @@ def login():
             # Check if user's branch is active (branch users only)
             if user.branch_id:
                 user_branch = db.session.get(Branch, user.branch_id)
-                if user_branch and not user_branch.is_active:
+                if not user_branch:
+                    flash('Cabang yang ditugaskan tidak ditemukan. Hubungi owner/admin pusat.', 'danger')
+                    return render_template('auth/login.html')
+                if not user_branch.is_active:
                     flash(f'Cabang "{user_branch.name}" sedang nonaktif. Hubungi owner/admin pusat.', 'danger')
                     return render_template('auth/login.html')
             
@@ -766,11 +816,28 @@ def dashboard():
         else:
             table.status = 'available'
     
-    # Low stock items (stock <= 10)
-    low_stock_items = MenuItem.query.filter(
-        MenuItem.is_available == True,
-        MenuItem.stock <= 10
-    ).order_by(MenuItem.stock.asc()).all()
+    # Low stock items (stock <= 10) - per-branch
+    bid = get_user_branch_id()
+    if bid:
+        low_stock_items_raw = db.session.query(MenuItem, BranchMenuStock).join(
+            BranchMenuStock, BranchMenuStock.menu_item_id == MenuItem.id
+        ).filter(
+            BranchMenuStock.branch_id == bid,
+            BranchMenuStock.is_available == True,
+            BranchMenuStock.stock <= 10
+        ).order_by(BranchMenuStock.stock.asc()).all()
+        # Attach stock to menu item objects for template compatibility
+        low_stock_items = []
+        for mi, bms in low_stock_items_raw:
+            mi._branch_stock = bms.stock
+            low_stock_items.append(mi)
+    else:
+        low_stock_items = MenuItem.query.filter(
+            MenuItem.is_available == True,
+            MenuItem.stock <= 10
+        ).order_by(MenuItem.stock.asc()).all()
+        for mi in low_stock_items:
+            mi._branch_stock = mi.stock
     
     return render_template('dashboard.html',
                          total_income_today=total_income_today,
@@ -816,13 +883,18 @@ def online_order(table_number):
 # API Routes
 @app.route('/api/menu')
 def api_get_menu():
-    menu_items = MenuItem.query.filter_by(is_available=True).all()
-    return jsonify([item.to_dict() for item in menu_items])
+    bid = get_user_branch_id()
+    menu_items = MenuItem.query.all()
+    items = get_menu_with_branch_stock(menu_items, bid)
+    # Filter to available only (per-branch availability)
+    return jsonify([i for i in items if i['is_available']])
 
 @app.route('/api/menu/category/<int:category_id>')
 def api_get_menu_by_category(category_id):
-    menu_items = MenuItem.query.filter_by(category_id=category_id, is_available=True).all()
-    return jsonify([item.to_dict() for item in menu_items])
+    bid = get_user_branch_id()
+    menu_items = MenuItem.query.filter_by(category_id=category_id).all()
+    items = get_menu_with_branch_stock(menu_items, bid)
+    return jsonify([i for i in items if i['is_available']])
 
 # ============================================
 # CART API - Database-backed shopping cart
@@ -1021,15 +1093,23 @@ def api_create_order():
         db.session.flush()
         
         # Add order items
+        order_branch_id = get_user_branch_id()
         for item in items:
             menu_item = db.session.get(MenuItem, item.get('menu_item_id') or item.get('id'))
             if menu_item:
                 qty = item.get('quantity', 1)
                 
-                # Check stock availability
-                if menu_item.stock < qty:
-                    db.session.rollback()
-                    return jsonify({'error': f'Stok "{menu_item.name}" tidak cukup (sisa {menu_item.stock})'}), 400
+                # Check stock availability (per-branch)
+                if order_branch_id:
+                    bms = get_branch_stock(menu_item.id, order_branch_id)
+                    if bms.stock < qty:
+                        db.session.rollback()
+                        return jsonify({'error': f'Stok "{menu_item.name}" tidak cukup (sisa {bms.stock})'}), 400
+                else:
+                    # Owner/admin fallback: use global stock
+                    if menu_item.stock < qty:
+                        db.session.rollback()
+                        return jsonify({'error': f'Stok "{menu_item.name}" tidak cukup (sisa {menu_item.stock})'}), 400
                 
                 order_item = OrderItem(
                     order_id=order.id,
@@ -1044,8 +1124,12 @@ def api_create_order():
                 )
                 db.session.add(order_item)
                 
-                # Decrement stock
-                menu_item.stock -= qty
+                # Decrement stock (per-branch)
+                if order_branch_id:
+                    bms = get_branch_stock(menu_item.id, order_branch_id)
+                    bms.stock -= qty
+                else:
+                    menu_item.stock -= qty
         
         # Calculate totals
         order.calculate_totals()
@@ -1244,7 +1328,11 @@ def api_update_order_status(order_id):
             if item.menu_item_id:
                 menu_item = db.session.get(MenuItem, item.menu_item_id)
                 if menu_item:
-                    menu_item.stock += item.quantity
+                    if order.branch_id:
+                        bms = get_branch_stock(menu_item.id, order.branch_id)
+                        bms.stock += item.quantity
+                    else:
+                        menu_item.stock += item.quantity
     
     db.session.commit()
     
@@ -1558,6 +1646,14 @@ def admin_create_menu():
     )
     
     db.session.add(menu_item)
+    db.session.flush()
+    
+    # Create BranchMenuStock entries for all active branches
+    branches = Branch.query.filter_by(is_active=True).all()
+    for branch in branches:
+        bms = BranchMenuStock(branch_id=branch.id, menu_item_id=menu_item.id, stock=100, is_available=True)
+        db.session.add(bms)
+    
     db.session.commit()
     
     flash('Menu berhasil ditambahkan!', 'success')
@@ -1576,9 +1672,20 @@ def admin_edit_menu(id):
     menu_item.category_id = request.form.get('category_id', menu_item.category_id)
     menu_item.description = request.form.get('description', menu_item.description)
     menu_item.is_popular = request.form.get('is_popular') == 'on'
-    menu_item.is_available = request.form.get('is_available') == 'on'
     menu_item.has_spicy_option = request.form.get('has_spicy_option') == 'on'
     menu_item.has_temperature_option = request.form.get('has_temperature_option') == 'on'
+    
+    # Update per-branch stock/availability
+    bid = get_user_branch_id()
+    new_available = request.form.get('is_available') == 'on'
+    if bid:
+        bms = get_branch_stock(menu_item.id, bid)
+        bms.is_available = new_available
+    else:
+        # Owner: update global is_available + all branches
+        menu_item.is_available = new_available
+        for bms in BranchMenuStock.query.filter_by(menu_item_id=menu_item.id).all():
+            bms.is_available = new_available
     
     # Handle image: URL or upload
     image_url = request.form.get('image_url', '').strip()
@@ -1613,6 +1720,9 @@ def admin_delete_menu(id):
     # Delete from cart items first
     CartItem.query.filter_by(menu_item_id=id).delete()
     
+    # Delete branch stock entries
+    BranchMenuStock.query.filter_by(menu_item_id=id).delete()
+    
     db.session.delete(menu_item)
     db.session.commit()
     
@@ -1626,7 +1736,8 @@ def admin_delete_menu(id):
 def api_get_menu_item(id):
     """Get menu item data for edit form"""
     menu_item = MenuItem.query.get_or_404(id)
-    return jsonify({
+    bid = get_user_branch_id()
+    data = {
         'id': menu_item.id,
         'code': menu_item.code,
         'name': menu_item.name,
@@ -1638,7 +1749,13 @@ def api_get_menu_item(id):
         'is_available': menu_item.is_available,
         'has_spicy_option': menu_item.has_spicy_option,
         'has_temperature_option': menu_item.has_temperature_option
-    })
+    }
+    # Return per-branch availability if user is branch-specific
+    if bid:
+        bms = get_branch_stock(menu_item.id, bid)
+        data['is_available'] = bms.is_available
+        data['stock'] = bms.stock
+    return jsonify(data)
 
 @app.route('/admin/printer')
 @login_required
@@ -1984,6 +2101,14 @@ def admin_branch_create():
         closing_time=closing_time
     )
     db.session.add(branch)
+    db.session.flush()
+    
+    # Create BranchMenuStock entries for all existing menu items
+    all_menu_items = MenuItem.query.all()
+    for mi in all_menu_items:
+        bms = BranchMenuStock(branch_id=branch.id, menu_item_id=mi.id, stock=100, is_available=True)
+        db.session.add(bms)
+    
     db.session.commit()
     
     flash(f'Cabang "{name}" berhasil ditambahkan!', 'success')

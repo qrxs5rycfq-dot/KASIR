@@ -539,6 +539,24 @@ class Branch(db.Model):
         return f'<Branch {self.name}>'
 
 
+class BranchMenuStock(db.Model):
+    """Per-branch stock and availability for shared menu items"""
+    __tablename__ = 'branch_menu_stock'
+    __table_args__ = (db.UniqueConstraint('branch_id', 'menu_item_id', name='uq_branch_menu'),)
+    
+    id = db.Column(db.Integer, primary_key=True)
+    branch_id = db.Column(db.Integer, db.ForeignKey('branches.id'), nullable=False)
+    menu_item_id = db.Column(db.Integer, db.ForeignKey('menu_items.id'), nullable=False)
+    stock = db.Column(db.Integer, default=100)
+    is_available = db.Column(db.Boolean, default=True)
+    
+    branch = db.relationship('Branch', backref=db.backref('menu_stocks', lazy='dynamic'))
+    menu_item = db.relationship('MenuItem', backref=db.backref('branch_stocks', lazy='dynamic'))
+    
+    def __repr__(self):
+        return f'<BranchMenuStock branch={self.branch_id} item={self.menu_item_id} stock={self.stock}>'
+
+
 class CashierShift(db.Model):
     """Shift management for cashier operations"""
     __tablename__ = 'cashier_shifts'

@@ -120,8 +120,8 @@
                             <p class="text-gray-400 text-xs">{{ item.price|format_currency }}</p>
                         </div>
                     </div>
-                    <span class="px-2 py-1 rounded-full text-xs font-bold {% if item.stock <= 0 %}bg-red-500/20 text-red-400{% elif item.stock <= 5 %}bg-orange-500/20 text-orange-400{% else %}bg-yellow-500/20 text-yellow-400{% endif %}">
-                        {% if item.stock <= 0 %}Habis{% else %}Sisa {{ item.stock }}{% endif %}
+                    <span class="px-2 py-1 rounded-full text-xs font-bold {% if item._branch_stock <= 0 %}bg-red-500/20 text-red-400{% elif item._branch_stock <= 5 %}bg-orange-500/20 text-orange-400{% else %}bg-yellow-500/20 text-yellow-400{% endif %}">
+                        {% if item._branch_stock <= 0 %}Habis{% else %}Sisa {{ item._branch_stock }}{% endif %}
                     </span>
                 </div>
                 {% endfor %}
