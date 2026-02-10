@@ -68,7 +68,15 @@
                 </div>
                 
                 <div class="flex items-center space-x-2 pt-4 border-t border-white/10">
-                    <button onclick="editBranch({{ branch.id }}, '{{ branch.name }}', '{{ branch.code }}', '{{ branch.address or '' }}', '{{ branch.phone or '' }}', '{{ branch.manager_name or '' }}', '{{ branch.opening_time }}', '{{ branch.closing_time }}')" 
+                    <button onclick="editBranch(this)" 
+                            data-id="{{ branch.id }}"
+                            data-name="{{ branch.name|e }}"
+                            data-code="{{ branch.code|e }}"
+                            data-address="{{ (branch.address or '')|e }}"
+                            data-phone="{{ (branch.phone or '')|e }}"
+                            data-manager="{{ (branch.manager_name or '')|e }}"
+                            data-opening="{{ branch.opening_time }}"
+                            data-closing="{{ branch.closing_time }}"
                             class="flex-1 py-2 rounded-lg bg-white/5 text-gray-400 hover:bg-white/10 hover:text-white text-sm">
                         <i class="fas fa-edit mr-1"></i>Edit
                     </button>
@@ -221,22 +229,27 @@
 </div>
 
 <script>
-function editBranch(id, name, code, address, phone, manager, opening, closing) {
+function editBranch(el) {
+    const id = el.dataset.id;
     document.getElementById('edit-branch-form').action = `/admin/branches/${id}/edit`;
-    document.getElementById('edit-name').value = name;
-    document.getElementById('edit-code').value = code;
-    document.getElementById('edit-address').value = address;
-    document.getElementById('edit-phone').value = phone;
-    document.getElementById('edit-manager').value = manager;
-    document.getElementById('edit-opening').value = opening;
-    document.getElementById('edit-closing').value = closing;
+    document.getElementById('edit-name').value = el.dataset.name;
+    document.getElementById('edit-code').value = el.dataset.code;
+    document.getElementById('edit-address').value = el.dataset.address;
+    document.getElementById('edit-phone').value = el.dataset.phone;
+    document.getElementById('edit-manager').value = el.dataset.manager;
+    document.getElementById('edit-opening').value = el.dataset.opening;
+    document.getElementById('edit-closing').value = el.dataset.closing;
     document.getElementById('edit-branch-modal').classList.remove('hidden');
     document.getElementById('edit-branch-modal').classList.add('flex');
 }
 
 async function toggleBranch(id) {
     try {
-        const response = await fetch(`/admin/branches/${id}/toggle`, { method: 'POST' });
+        const csrfToken = document.querySelector('meta[name="csrf-token"]')?.getAttribute('content');
+        const response = await fetch(`/admin/branches/${id}/toggle`, { 
+            method: 'POST',
+            headers: { 'X-CSRFToken': csrfToken }
+        });
         const data = await response.json();
         if (data.success) {
             location.reload();

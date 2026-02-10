@@ -1087,14 +1087,8 @@ def generate_midtrans_snap_token(order, midtrans_order_id):
             'name': item.name[:50]  # Midtrans limits name to 50 chars
         })
     
-    # Discount as negative item if applicable
-    if order.discount > 0:
-        item_details.append({
-            'id': 'DISCOUNT',
-            'price': -int(order.discount),
-            'quantity': 1,
-            'name': 'Diskon'
-        })
+    # Note: Discount is already factored into the order total,
+    # no need to add separate line items for it in Midtrans
     
     # Customer details
     customer_details = {
@@ -1994,16 +1988,20 @@ def api_shift_close():
     shift.status = 'closed'
     shift.notes = data.get('notes', shift.notes)
     
-    # Calculate total sales during shift
-    orders_in_shift = Order.query.filter(
+    # Calculate total sales during shift using database aggregation
+    from sqlalchemy import func
+    shift_stats = db.session.query(
+        func.count(Order.id).label('total_orders'),
+        func.coalesce(func.sum(Order.total), 0).label('total_sales')
+    ).filter(
         Order.created_at >= shift.start_time,
         Order.created_at <= shift.end_time,
         Order.user_id == current_user.id,
         Order.status.in_(['processing', 'completed'])
-    ).all()
+    ).first()
     
-    shift.total_orders = len(orders_in_shift)
-    shift.total_sales = sum(o.total for o in orders_in_shift)
+    shift.total_orders = shift_stats.total_orders
+    shift.total_sales = shift_stats.total_sales
     
     db.session.commit()
     
