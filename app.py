@@ -575,6 +575,13 @@ def login():
                 flash('Akun Anda telah dinonaktifkan. Hubungi administrator.', 'danger')
                 return render_template('auth/login.html')
             
+            # Check if user's branch is active (branch users only)
+            if user.branch_id:
+                user_branch = db.session.get(Branch, user.branch_id)
+                if user_branch and not user_branch.is_active:
+                    flash(f'Cabang "{user_branch.name}" sedang nonaktif. Hubungi owner/admin pusat.', 'danger')
+                    return render_template('auth/login.html')
+            
             login_user(user, remember=remember)
             user.last_login = utc_now()
             db.session.commit()
@@ -743,7 +750,7 @@ def dashboard():
     recent_orders = branch_filter(Order.query, Order).order_by(Order.created_at.desc()).limit(10).all()
     
     # Get tables status - based on active orders
-    tables = branch_filter(Table.query, Table).filter_by(is_active=True).all()
+    tables = Table.query.filter_by(is_active=True).all()
     
     # Calculate occupied tables from current active orders
     active_orders = branch_filter(Order.query, Order).filter(
@@ -760,7 +767,7 @@ def dashboard():
             table.status = 'available'
     
     # Low stock items (stock <= 10)
-    low_stock_items = branch_filter(MenuItem.query, MenuItem).filter(
+    low_stock_items = MenuItem.query.filter(
         MenuItem.is_available == True,
         MenuItem.stock <= 10
     ).order_by(MenuItem.stock.asc()).all()
@@ -779,9 +786,9 @@ def dashboard():
 @login_required
 @role_required('admin', 'manager', 'kasir')
 def pos():
-    categories = branch_filter(Category.query, Category).filter_by(is_active=True).order_by(Category.order).all()
-    menu_items = branch_filter(MenuItem.query, MenuItem).filter_by(is_available=True).all()
-    tables = branch_filter(Table.query, Table).filter_by(is_active=True).all()
+    categories = Category.query.filter_by(is_active=True).order_by(Category.order).all()
+    menu_items = MenuItem.query.filter_by(is_available=True).all()
+    tables = Table.query.filter_by(is_active=True).all()
     
     return render_template('pos.html',
                          categories=categories,
@@ -809,12 +816,12 @@ def online_order(table_number):
 # API Routes
 @app.route('/api/menu')
 def api_get_menu():
-    menu_items = branch_filter(MenuItem.query, MenuItem).filter_by(is_available=True).all()
+    menu_items = MenuItem.query.filter_by(is_available=True).all()
     return jsonify([item.to_dict() for item in menu_items])
 
 @app.route('/api/menu/category/<int:category_id>')
 def api_get_menu_by_category(category_id):
-    menu_items = branch_filter(MenuItem.query, MenuItem).filter_by(category_id=category_id, is_available=True).all()
+    menu_items = MenuItem.query.filter_by(category_id=category_id, is_available=True).all()
     return jsonify([item.to_dict() for item in menu_items])
 
 # ============================================
@@ -1477,8 +1484,8 @@ def admin_toggle_user(user_id):
 @login_required
 @role_required('admin', 'manager')
 def admin_menu():
-    categories = branch_filter(Category.query, Category).order_by(Category.order).all()
-    menu_items = branch_filter(MenuItem.query, MenuItem).all()
+    categories = Category.query.order_by(Category.order).all()
+    menu_items = MenuItem.query.all()
     return render_template('admin/menu.html', categories=categories, menu_items=menu_items)
 
 def allowed_file(filename):
@@ -1547,8 +1554,7 @@ def admin_create_menu():
         is_popular=is_popular,
         has_spicy_option=has_spicy_option,
         has_temperature_option=has_temperature_option,
-        image=image,
-        branch_id=get_user_branch_id()
+        image=image
     )
     
     db.session.add(menu_item)
@@ -1653,7 +1659,7 @@ def printer_station():
 @login_required
 @role_required('admin', 'manager')
 def admin_tables():
-    tables = branch_filter(Table.query, Table).all()
+    tables = Table.query.all()
     return render_template('admin/tables.html', tables=tables)
 
 @app.route('/admin/tables/<int:table_id>/qr')
@@ -1691,8 +1697,7 @@ def admin_table_add():
     table = Table(
         number=number,
         name=name or f"Meja {number}",
-        capacity=capacity,
-        branch_id=get_user_branch_id()
+        capacity=capacity
     )
     db.session.add(table)
     db.session.commit()
@@ -2016,12 +2021,20 @@ def admin_branch_edit(branch_id):
 
 @app.route('/admin/branches/<int:branch_id>/toggle', methods=['POST'])
 @login_required
-@role_required('admin', 'manager')
+@role_required('admin')
 def admin_branch_toggle(branch_id):
-    """Toggle branch active status"""
+    """Toggle branch active status - only owner (admin with no branch) can do this"""
+    # Only owner/admin pusat (branch_id=NULL) can toggle branches
+    if current_user.branch_id is not None:
+        return jsonify({'success': False, 'error': 'Hanya owner/admin pusat yang dapat mengubah status cabang'}), 403
+    
     branch = db.session.get(Branch, branch_id)
     if not branch:
         return jsonify({'success': False, 'error': 'Cabang tidak ditemukan'}), 404
+    
+    # Prevent deactivating the Pusat branch
+    if branch.code == 'PUSAT' and branch.is_active:
+        return jsonify({'success': False, 'error': 'Cabang Pusat tidak dapat dinonaktifkan'}), 400
     
     branch.is_active = not branch.is_active
     db.session.commit()
@@ -2037,10 +2050,20 @@ def admin_branch_toggle(branch_id):
 @login_required
 @role_required('admin')
 def admin_branch_delete(branch_id):
-    """Delete a branch"""
+    """Delete a branch - only owner (admin with no branch) can do this"""
+    # Only owner/admin pusat (branch_id=NULL) can delete branches
+    if current_user.branch_id is not None:
+        flash('Hanya owner/admin pusat yang dapat menghapus cabang.', 'danger')
+        return redirect(url_for('admin_branches'))
+    
     branch = db.session.get(Branch, branch_id)
     if not branch:
         flash('Cabang tidak ditemukan.', 'danger')
+        return redirect(url_for('admin_branches'))
+    
+    # Prevent deleting the Pusat branch
+    if branch.code == 'PUSAT':
+        flash('Cabang Pusat tidak dapat dihapus.', 'danger')
         return redirect(url_for('admin_branches'))
     
     name = branch.name

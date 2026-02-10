@@ -80,11 +80,11 @@
                             class="flex-1 py-2 rounded-lg bg-white/5 text-gray-400 hover:bg-white/10 hover:text-white text-sm">
                         <i class="fas fa-edit mr-1"></i>Edit
                     </button>
+                    {% if is_owner and branch.code != 'PUSAT' %}
                     <button onclick="toggleBranch({{ branch.id }})" 
                             class="py-2 px-3 rounded-lg {% if branch.is_active %}bg-yellow-500/10 text-yellow-400 hover:bg-yellow-500/20{% else %}bg-green-500/10 text-green-400 hover:bg-green-500/20{% endif %} text-sm">
                         <i class="fas {% if branch.is_active %}fa-pause{% else %}fa-play{% endif %}"></i>
                     </button>
-                    {% if current_user.has_role('admin') %}
                     <form action="{{ url_for('admin_branch_delete', branch_id=branch.id) }}" method="POST" 
                           onsubmit="return confirm('Hapus cabang {{ branch.name }}?')">
                         <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
