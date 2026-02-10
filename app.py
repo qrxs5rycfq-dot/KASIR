@@ -1446,7 +1446,7 @@ def admin_create_user():
         username=username,
         email=email,
         full_name=full_name,
-        branch_id=int(request.form.get('branch_id')) if request.form.get('branch_id') else get_user_branch_id()
+        branch_id=int(request.form['branch_id']) if request.form.get('branch_id', '').strip() else get_user_branch_id()
     )
     user.set_password(password)
     

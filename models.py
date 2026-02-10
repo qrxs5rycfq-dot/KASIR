@@ -162,6 +162,7 @@ class MenuItem(db.Model):
 
 class Table(db.Model):
     __tablename__ = 'tables'
+    __table_args__ = (db.UniqueConstraint('number', 'branch_id', name='uq_table_number_branch'),)
     
     id = db.Column(db.Integer, primary_key=True)
     number = db.Column(db.String(20), nullable=False)
