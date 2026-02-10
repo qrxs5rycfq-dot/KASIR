@@ -490,6 +490,78 @@ class Discount(db.Model):
         return f'<Discount {self.code}>'
 
 
+class Branch(db.Model):
+    """Branch/Cabang model for multi-location restaurant management"""
+    __tablename__ = 'branches'
+    
+    id = db.Column(db.Integer, primary_key=True)
+    name = db.Column(db.String(100), nullable=False)
+    code = db.Column(db.String(20), unique=True, nullable=False)
+    address = db.Column(db.Text)
+    phone = db.Column(db.String(20))
+    manager_name = db.Column(db.String(100))
+    is_active = db.Column(db.Boolean, default=True)
+    opening_time = db.Column(db.String(5), default='08:00')
+    closing_time = db.Column(db.String(5), default='22:00')
+    created_at = db.Column(db.DateTime, default=utc_now)
+    updated_at = db.Column(db.DateTime, default=utc_now, onupdate=utc_now)
+    
+    def to_dict(self):
+        return {
+            'id': self.id,
+            'name': self.name,
+            'code': self.code,
+            'address': self.address,
+            'phone': self.phone,
+            'manager_name': self.manager_name,
+            'is_active': self.is_active,
+            'opening_time': self.opening_time,
+            'closing_time': self.closing_time,
+            'created_at': self.created_at.isoformat() if self.created_at else None
+        }
+    
+    def __repr__(self):
+        return f'<Branch {self.name}>'
+
+
+class CashierShift(db.Model):
+    """Shift management for cashier operations"""
+    __tablename__ = 'cashier_shifts'
+    
+    id = db.Column(db.Integer, primary_key=True)
+    user_id = db.Column(db.Integer, db.ForeignKey('users.id'), nullable=False)
+    start_time = db.Column(db.DateTime, nullable=False, default=utc_now)
+    end_time = db.Column(db.DateTime, nullable=True)
+    opening_cash = db.Column(db.Integer, default=0)
+    closing_cash = db.Column(db.Integer, nullable=True)
+    total_sales = db.Column(db.Integer, default=0)
+    total_orders = db.Column(db.Integer, default=0)
+    notes = db.Column(db.Text)
+    status = db.Column(db.String(20), default='open')  # open, closed
+    created_at = db.Column(db.DateTime, default=utc_now)
+    
+    user = db.relationship('User', backref=db.backref('shifts', lazy='dynamic'))
+    
+    def to_dict(self):
+        return {
+            'id': self.id,
+            'user_id': self.user_id,
+            'user_name': self.user.full_name or self.user.username if self.user else None,
+            'start_time': self.start_time.isoformat() if self.start_time else None,
+            'end_time': self.end_time.isoformat() if self.end_time else None,
+            'opening_cash': self.opening_cash,
+            'closing_cash': self.closing_cash,
+            'total_sales': self.total_sales,
+            'total_orders': self.total_orders,
+            'notes': self.notes,
+            'status': self.status,
+            'created_at': self.created_at.isoformat() if self.created_at else None
+        }
+    
+    def __repr__(self):
+        return f'<CashierShift {self.id} - {self.status}>'
+
+
 class Notification(db.Model):
     """Notification model for real-time alerts"""
     __tablename__ = 'notifications'

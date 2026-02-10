@@ -19,7 +19,7 @@ from flask_limiter.util import get_remote_address
 from werkzeug.utils import secure_filename
 
 from config import config
-from models import db, User, Role, Permission, Category, MenuItem, Table, Order, OrderItem, Payment, Income, Setting, Cart, CartItem, Discount, PendingPrint, Notification
+from models import db, User, Role, Permission, Category, MenuItem, Table, Order, OrderItem, Payment, Income, Setting, Cart, CartItem, Discount, PendingPrint, Notification, Branch, CashierShift
 
 # Import USB printer module
 try:
@@ -1835,7 +1835,189 @@ def api_active_discounts():
     })
 
 
-# Kitchen Display for Cook
+# ============================================
+# BRANCH / CABANG MANAGEMENT
+# ============================================
+
+@app.route('/admin/branches')
+@login_required
+@role_required('admin', 'manager')
+def admin_branches():
+    """Branch management page"""
+    branches = Branch.query.order_by(Branch.created_at.desc()).all()
+    return render_template('admin/branches.html', branches=branches, active_page='admin_branches')
+
+@app.route('/admin/branches/create', methods=['POST'])
+@login_required
+@role_required('admin', 'manager')
+def admin_branch_create():
+    """Create a new branch"""
+    name = request.form.get('name', '').strip()
+    code = request.form.get('code', '').strip().upper()
+    address = request.form.get('address', '').strip()
+    phone = request.form.get('phone', '').strip()
+    manager_name = request.form.get('manager_name', '').strip()
+    opening_time = request.form.get('opening_time', '08:00').strip()
+    closing_time = request.form.get('closing_time', '22:00').strip()
+    
+    if not name or not code:
+        flash('Nama dan kode cabang wajib diisi.', 'danger')
+        return redirect(url_for('admin_branches'))
+    
+    # Check for duplicate code
+    existing = Branch.query.filter_by(code=code).first()
+    if existing:
+        flash('Kode cabang sudah digunakan.', 'danger')
+        return redirect(url_for('admin_branches'))
+    
+    branch = Branch(
+        name=name,
+        code=code,
+        address=address,
+        phone=phone,
+        manager_name=manager_name,
+        opening_time=opening_time,
+        closing_time=closing_time
+    )
+    db.session.add(branch)
+    db.session.commit()
+    
+    flash(f'Cabang "{name}" berhasil ditambahkan!', 'success')
+    return redirect(url_for('admin_branches'))
+
+@app.route('/admin/branches/<int:branch_id>/edit', methods=['POST'])
+@login_required
+@role_required('admin', 'manager')
+def admin_branch_edit(branch_id):
+    """Edit a branch"""
+    branch = db.session.get(Branch, branch_id)
+    if not branch:
+        flash('Cabang tidak ditemukan.', 'danger')
+        return redirect(url_for('admin_branches'))
+    
+    branch.name = request.form.get('name', branch.name).strip()
+    new_code = request.form.get('code', branch.code).strip().upper()
+    
+    # Check for duplicate code (exclude current branch)
+    existing = Branch.query.filter(Branch.code == new_code, Branch.id != branch_id).first()
+    if existing:
+        flash('Kode cabang sudah digunakan.', 'danger')
+        return redirect(url_for('admin_branches'))
+    
+    branch.code = new_code
+    branch.address = request.form.get('address', branch.address).strip()
+    branch.phone = request.form.get('phone', branch.phone).strip()
+    branch.manager_name = request.form.get('manager_name', branch.manager_name).strip()
+    branch.opening_time = request.form.get('opening_time', branch.opening_time).strip()
+    branch.closing_time = request.form.get('closing_time', branch.closing_time).strip()
+    
+    db.session.commit()
+    flash(f'Cabang "{branch.name}" berhasil diperbarui!', 'success')
+    return redirect(url_for('admin_branches'))
+
+@app.route('/admin/branches/<int:branch_id>/toggle', methods=['POST'])
+@login_required
+@role_required('admin', 'manager')
+def admin_branch_toggle(branch_id):
+    """Toggle branch active status"""
+    branch = db.session.get(Branch, branch_id)
+    if not branch:
+        return jsonify({'success': False, 'error': 'Cabang tidak ditemukan'}), 404
+    
+    branch.is_active = not branch.is_active
+    db.session.commit()
+    
+    status = 'aktif' if branch.is_active else 'nonaktif'
+    return jsonify({
+        'success': True,
+        'is_active': branch.is_active,
+        'message': f'Cabang "{branch.name}" sekarang {status}'
+    })
+
+@app.route('/admin/branches/<int:branch_id>/delete', methods=['POST'])
+@login_required
+@role_required('admin')
+def admin_branch_delete(branch_id):
+    """Delete a branch"""
+    branch = db.session.get(Branch, branch_id)
+    if not branch:
+        flash('Cabang tidak ditemukan.', 'danger')
+        return redirect(url_for('admin_branches'))
+    
+    name = branch.name
+    db.session.delete(branch)
+    db.session.commit()
+    
+    flash(f'Cabang "{name}" berhasil dihapus.', 'success')
+    return redirect(url_for('admin_branches'))
+
+
+# ============================================
+# SHIFT MANAGEMENT
+# ============================================
+
+@app.route('/api/shift/open', methods=['POST'])
+@login_required
+@role_required('admin', 'manager', 'kasir')
+def api_shift_open():
+    """Open a new cashier shift"""
+    # Check if user already has an open shift
+    open_shift = CashierShift.query.filter_by(user_id=current_user.id, status='open').first()
+    if open_shift:
+        return jsonify({'success': False, 'error': 'Anda sudah memiliki shift yang aktif'}), 400
+    
+    data = request.get_json()
+    opening_cash = int(data.get('opening_cash', 0))
+    
+    shift = CashierShift(
+        user_id=current_user.id,
+        opening_cash=opening_cash,
+        notes=data.get('notes', '')
+    )
+    db.session.add(shift)
+    db.session.commit()
+    
+    return jsonify({'success': True, 'shift': shift.to_dict()})
+
+@app.route('/api/shift/close', methods=['POST'])
+@login_required
+@role_required('admin', 'manager', 'kasir')
+def api_shift_close():
+    """Close the current cashier shift"""
+    shift = CashierShift.query.filter_by(user_id=current_user.id, status='open').first()
+    if not shift:
+        return jsonify({'success': False, 'error': 'Tidak ada shift yang aktif'}), 400
+    
+    data = request.get_json()
+    shift.closing_cash = int(data.get('closing_cash', 0))
+    shift.end_time = utc_now()
+    shift.status = 'closed'
+    shift.notes = data.get('notes', shift.notes)
+    
+    # Calculate total sales during shift
+    orders_in_shift = Order.query.filter(
+        Order.created_at >= shift.start_time,
+        Order.created_at <= shift.end_time,
+        Order.user_id == current_user.id,
+        Order.status.in_(['processing', 'completed'])
+    ).all()
+    
+    shift.total_orders = len(orders_in_shift)
+    shift.total_sales = sum(o.total for o in orders_in_shift)
+    
+    db.session.commit()
+    
+    return jsonify({'success': True, 'shift': shift.to_dict()})
+
+@app.route('/api/shift/current')
+@login_required
+def api_shift_current():
+    """Get current open shift for the user"""
+    shift = CashierShift.query.filter_by(user_id=current_user.id, status='open').first()
+    return jsonify({
+        'success': True,
+        'shift': shift.to_dict() if shift else None
+    })
 @app.route('/kitchen')
 @login_required
 @role_required('admin', 'manager', 'koki')
