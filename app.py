@@ -965,7 +965,7 @@ def api_create_order():
             
             # Apply discount to order
             order.discount = discount_amount
-            order.total = max(0, order.subtotal - discount_amount + order.tax)
+            order.total = max(0, order.subtotal - discount_amount)
         
         # Create payment record
         final_total = order.total
@@ -1087,13 +1087,13 @@ def generate_midtrans_snap_token(order, midtrans_order_id):
             'name': item.name[:50]  # Midtrans limits name to 50 chars
         })
     
-    # Add tax as item
-    if order.tax > 0:
+    # Discount as negative item if applicable
+    if order.discount > 0:
         item_details.append({
-            'id': 'TAX',
-            'price': int(order.tax),
+            'id': 'DISCOUNT',
+            'price': -int(order.discount),
             'quantity': 1,
-            'name': 'Pajak (10%)'
+            'name': 'Diskon'
         })
     
     # Customer details

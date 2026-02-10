@@ -193,8 +193,8 @@ class Order(db.Model):
     
     def calculate_totals(self):
         self.subtotal = sum(item.subtotal for item in self.items)
-        self.tax = int(self.subtotal * 0.10)  # 10% tax
-        self.total = self.subtotal + self.tax - self.discount
+        self.tax = 0
+        self.total = self.subtotal - self.discount
         
     def to_dict(self):
         return {
@@ -338,10 +338,10 @@ class Cart(db.Model):
         return sum(item.subtotal for item in self.items)
     
     def get_tax(self):
-        return int(self.get_subtotal() * 0.10)
+        return 0
     
     def get_total(self):
-        return self.get_subtotal() + self.get_tax()
+        return self.get_subtotal()
     
     def get_item_count(self):
         return sum(item.quantity for item in self.items)

@@ -93,7 +93,6 @@
                         <th class="text-left p-4 text-sm font-medium text-gray-400">Order ID</th>
                         <th class="text-left p-4 text-sm font-medium text-gray-400">Tanggal</th>
                         <th class="text-left p-4 text-sm font-medium text-gray-400">Subtotal</th>
-                        <th class="text-left p-4 text-sm font-medium text-gray-400">Pajak</th>
                         <th class="text-left p-4 text-sm font-medium text-gray-400">Total</th>
                     </tr>
                 </thead>
@@ -103,12 +102,11 @@
                         <td class="p-4 font-medium">{{ order.order_number }}</td>
                         <td class="p-4 text-gray-300">{{ order.created_at.strftime('%d/%m/%Y %H:%M') }}</td>
                         <td class="p-4 text-gray-300">{{ order.subtotal|format_currency }}</td>
-                        <td class="p-4 text-gray-300">{{ order.tax|format_currency }}</td>
                         <td class="p-4 text-primary-400 font-semibold">{{ order.total|format_currency }}</td>
                     </tr>
                     {% else %}
                     <tr>
-                        <td colspan="5" class="p-8 text-center text-gray-500">Tidak ada pesanan dalam periode ini</td>
+                        <td colspan="4" class="p-8 text-center text-gray-500">Tidak ada pesanan dalam periode ini</td>
                     </tr>
                     {% endfor %}
                 </tbody>

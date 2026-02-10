@@ -281,7 +281,6 @@
             if (order.discount > 0) {
                 commands.push(...encoder.encode(`Diskon:      Rp ${formatNumber(order.discount)}\n`));
             }
-            commands.push(...encoder.encode(`Pajak:       Rp ${formatNumber(order.tax)}\n`));
             commands.push(...ESC_POS.BOLD_ON);
             commands.push(...encoder.encode(`TOTAL:       Rp ${formatNumber(order.total)}\n`));
             commands.push(...ESC_POS.BOLD_OFF);
