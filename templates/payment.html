@@ -494,6 +494,17 @@
             
             checkBtn.innerHTML = '<i class="fas fa-sync-alt mr-2"></i> Cek Status Pembayaran';
         }
+        
+        // Clean up polling when page is hidden or unloaded
+        document.addEventListener('visibilitychange', function() {
+            if (document.hidden && qrisPollingInterval) {
+                clearInterval(qrisPollingInterval);
+                qrisPollingInterval = null;
+            }
+        });
+        window.addEventListener('beforeunload', function() {
+            if (qrisPollingInterval) clearInterval(qrisPollingInterval);
+        });
     </script>
 </body>
 </html>

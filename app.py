@@ -3554,7 +3554,7 @@ def export_pdf():
     paid_orders = [o for o in orders if o.payment and o.payment.status == 'paid']
     total_revenue = sum(o.total for o in paid_orders)
     total_orders = len(paid_orders)
-    avg_order = total_revenue // total_orders if total_orders > 0 else 0
+    avg_order = round(total_revenue / total_orders) if total_orders > 0 else 0
     
     # Payment method breakdown
     payment_methods = {}
@@ -5259,7 +5259,6 @@ def api_test_payment_gateway():
 def bri_get_access_token():
     """Get BRI API access token using OAuth2 client credentials with RSA signature"""
     import requests
-    from datetime import timezone
     
     client_id = os.environ.get('BRI_CLIENT_ID', '')
     client_secret = os.environ.get('BRI_CLIENT_SECRET', '')
@@ -5271,7 +5270,10 @@ def bri_get_access_token():
     
     base_url = 'https://partner.api.bri.co.id' if is_production else 'https://sandbox.partner.api.bri.co.id'
     
-    timestamp = datetime.now(timezone.utc).strftime('%Y-%m-%dT%H:%M:%S.000+07:00')
+    # BRI API requires WIB (UTC+7) timestamp
+    wib = timezone(timedelta(hours=7))
+    now_wib = datetime.now(wib)
+    timestamp = now_wib.strftime('%Y-%m-%dT%H:%M:%S.') + f'{now_wib.microsecond // 1000:03d}+07:00'
     
     # Generate signature: SHA256withRSA(client_id + "|" + timestamp)
     signature = ''
@@ -5327,7 +5329,6 @@ def bri_get_access_token():
 def api_create_qris_bri():
     """Generate BRI QRIS MPM Dynamic QR code for an order"""
     import requests
-    from datetime import timezone
     
     data = request.json
     order_id = data.get('order_id')
@@ -5349,11 +5350,13 @@ def api_create_qris_bri():
     partner_ref = f"DTO-{order.order_number}-{int(datetime.now().timestamp())}"
     
     try:
-        timestamp = datetime.now(timezone.utc).strftime('%Y-%m-%dT%H:%M:%S.000+07:00')
+        wib = timezone(timedelta(hours=7))
+        now_wib = datetime.now(wib)
+        timestamp = now_wib.strftime('%Y-%m-%dT%H:%M:%S.') + f'{now_wib.microsecond // 1000:03d}+07:00'
         
         payload = {
             'partnerReferenceNo': partner_ref,
-            'amount': f"{order.total}.00",
+            'amount': f"{int(order.total)}.00",
             'currency': 'IDR',
             'merchantId': merchant_id,
             'terminalId': terminal_id,
@@ -5434,7 +5437,6 @@ def api_create_qris_bri():
 def api_check_qris_bri_status():
     """Check BRI QRIS payment status"""
     import requests
-    from datetime import timezone
     
     data = request.json
     order_id = data.get('order_id')
@@ -5454,7 +5456,9 @@ def api_check_qris_bri_status():
     base_url = 'https://partner.api.bri.co.id' if is_production else 'https://sandbox.partner.api.bri.co.id'
     
     try:
-        timestamp = datetime.now(timezone.utc).strftime('%Y-%m-%dT%H:%M:%S.000+07:00')
+        wib = timezone(timedelta(hours=7))
+        now_wib = datetime.now(wib)
+        timestamp = now_wib.strftime('%Y-%m-%dT%H:%M:%S.') + f'{now_wib.microsecond // 1000:03d}+07:00'
         
         resp = requests.post(
             f'{base_url}/snap/v1.0/qris-mpm-query',
