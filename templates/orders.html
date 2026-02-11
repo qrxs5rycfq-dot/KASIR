@@ -185,10 +185,6 @@ async function viewOrder(orderId) {
                         <span class="text-gray-400">Subtotal</span>
                         <span>Rp ${order.subtotal.toLocaleString('id-ID')}</span>
                     </div>
-                    <div class="flex justify-between">
-                        <span class="text-gray-400">Pajak (10%)</span>
-                        <span>Rp ${order.tax.toLocaleString('id-ID')}</span>
-                    </div>
                     ${order.discount > 0 ? `
                     <div class="flex justify-between text-green-400">
                         <span>Diskon</span>

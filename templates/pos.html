@@ -188,10 +188,6 @@
                 <span id="discount-amount">- Rp 0</span>
             </div>
             
-            <div class="flex justify-between text-sm">
-                <span class="text-gray-400">Pajak (10%)</span>
-                <span id="tax">Rp 0</span>
-            </div>
             <div class="flex justify-between text-lg font-bold pt-3 border-t border-white/10">
                 <span>Total</span>
                 <span id="total" class="text-primary-400">Rp 0</span>
@@ -327,7 +323,7 @@
 
 <script>
 // Cart state - loaded from database
-let cart = { items: [], subtotal: 0, tax: 0, total: 0 };
+let cart = { items: [], subtotal: 0, total: 0 };
 let paymentMethod = 'cash';
 let currentItem = null;
 let appliedDiscount = null; // Store applied discount
@@ -629,7 +625,6 @@ async function updateQuantity(itemId, delta) {
 
 function updateTotals() {
     document.getElementById('subtotal').textContent = formatCurrency(cart.subtotal || 0);
-    document.getElementById('tax').textContent = formatCurrency(cart.tax || 0);
     
     // Calculate discount and update total
     let finalTotal = cart.total || 0;
@@ -638,7 +633,7 @@ function updateTotals() {
         document.getElementById('discount-row').style.display = 'flex';
         document.getElementById('discount-name').textContent = `(${appliedDiscount.discount.code})`;
         document.getElementById('discount-amount').textContent = `- ${formatCurrency(discountAmount)}`;
-        finalTotal = Math.max(0, (cart.subtotal || 0) - discountAmount + (cart.tax || 0));
+        finalTotal = Math.max(0, (cart.subtotal || 0) - discountAmount);
     } else {
         document.getElementById('discount-row').style.display = 'none';
     }
@@ -754,7 +749,7 @@ async function processCheckout() {
     
     if (appliedDiscount) {
         discountAmount = appliedDiscount.discount_amount;
-        finalTotal = Math.max(0, (cart.subtotal || 0) - discountAmount + (cart.tax || 0));
+        finalTotal = Math.max(0, (cart.subtotal || 0) - discountAmount);
     }
     
     const paid = parseInt(document.getElementById('paid-amount').value) || 0;
@@ -911,10 +906,6 @@ function showReceipt(order) {
             <div class="flex justify-between text-xs">
                 <span>Subtotal</span>
                 <span>${formatCurrency(order.subtotal)}</span>
-            </div>
-            <div class="flex justify-between text-xs">
-                <span>Pajak (10%)</span>
-                <span>${formatCurrency(order.tax)}</span>
             </div>
             <div class="flex justify-between font-bold">
                 <span>Total</span>
@@ -1138,8 +1129,6 @@ function buildReceiptCommandsWithCopy(order, copyNum, totalCopies) {
     
     commands.push(...encoder.encode(pad('Subtotal:', `Rp ${formatNumber(order.subtotal || 0)}`)));
     commands.push(...ESC_POS.FEED_LINE);
-    commands.push(...encoder.encode(pad('Pajak (10%):', `Rp ${formatNumber(order.tax || 0)}`)));
-    commands.push(...ESC_POS.FEED_LINE);
     
     commands.push(...encoder.encode('================================'));
     commands.push(...ESC_POS.FEED_LINE);
@@ -1307,8 +1296,6 @@ function buildReceiptCommands(order) {
     
     commands.push(...encoder.encode(pad('Subtotal:', `Rp ${formatNumber(order.subtotal || 0)}`)));
     commands.push(...ESC_POS.FEED_LINE);
-    commands.push(...encoder.encode(pad('Pajak (10%):', `Rp ${formatNumber(order.tax || 0)}`)));
-    commands.push(...ESC_POS.FEED_LINE);
     
     commands.push(...ESC_POS.BOLD_ON);
     commands.push(...encoder.encode(pad('TOTAL:', `Rp ${formatNumber(order.total || 0)}`)));
@@ -1345,7 +1332,6 @@ function parseReceiptFromDOM(element) {
         order_number: 'N/A',
         items: [],
         subtotal: 0,
-        tax: 0,
         total: 0
     };
 }

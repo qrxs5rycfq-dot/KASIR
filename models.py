@@ -65,6 +65,7 @@ class User(UserMixin, db.Model):
     force_password_change = db.Column(db.Boolean, default=False)  # Force password change on first login
     printer_name = db.Column(db.String(100))  # Store last connected printer name
     printer_id = db.Column(db.String(100))  # Store Bluetooth device ID for auto-reconnect
+    branch_id = db.Column(db.Integer, db.ForeignKey('branches.id'), nullable=True)  # NULL = owner/admin sees all
     created_at = db.Column(db.DateTime, default=utc_now)
     updated_at = db.Column(db.DateTime, default=utc_now, onupdate=utc_now)
     last_login = db.Column(db.DateTime)
@@ -72,6 +73,7 @@ class User(UserMixin, db.Model):
     roles = db.relationship('Role', secondary=user_roles,
                            backref=db.backref('users', lazy='dynamic'))
     orders = db.relationship('Order', backref='user', lazy='dynamic')
+    branch = db.relationship('Branch', backref=db.backref('users', lazy='dynamic'))
     
     def set_password(self, password):
         self.password_hash = generate_password_hash(password)
@@ -108,9 +110,11 @@ class Category(db.Model):
     icon = db.Column(db.String(50))
     order = db.Column(db.Integer, default=0)
     is_active = db.Column(db.Boolean, default=True)
+    branch_id = db.Column(db.Integer, db.ForeignKey('branches.id'), nullable=True)
     created_at = db.Column(db.DateTime, default=utc_now)
     
     menu_items = db.relationship('MenuItem', backref='category', lazy='dynamic')
+    branch = db.relationship('Branch', backref=db.backref('categories', lazy='dynamic'))
     
     def __repr__(self):
         return f'<Category {self.name}>'
@@ -130,8 +134,11 @@ class MenuItem(db.Model):
     has_spicy_option = db.Column(db.Boolean, default=False)
     has_temperature_option = db.Column(db.Boolean, default=False)  # For drinks (hot/cold)
     stock = db.Column(db.Integer, default=100)
+    branch_id = db.Column(db.Integer, db.ForeignKey('branches.id'), nullable=True)
     created_at = db.Column(db.DateTime, default=utc_now)
     updated_at = db.Column(db.DateTime, default=utc_now, onupdate=utc_now)
+    
+    branch = db.relationship('Branch', backref=db.backref('menu_items', lazy='dynamic'))
     
     def to_dict(self):
         return {
@@ -155,17 +162,20 @@ class MenuItem(db.Model):
 
 class Table(db.Model):
     __tablename__ = 'tables'
+    __table_args__ = (db.UniqueConstraint('number', 'branch_id', name='uq_table_number_branch'),)
     
     id = db.Column(db.Integer, primary_key=True)
-    number = db.Column(db.String(20), unique=True, nullable=False)
+    number = db.Column(db.String(20), nullable=False)
     name = db.Column(db.String(100))
     capacity = db.Column(db.Integer, default=4)
     qr_code = db.Column(db.String(255))
     status = db.Column(db.String(20), default='available')  # available, occupied, reserved
     is_active = db.Column(db.Boolean, default=True)
+    branch_id = db.Column(db.Integer, db.ForeignKey('branches.id'), nullable=True)
     created_at = db.Column(db.DateTime, default=utc_now)
     
     orders = db.relationship('Order', backref='table', lazy='dynamic')
+    branch = db.relationship('Branch', backref=db.backref('tables', lazy='dynamic'))
     
     def __repr__(self):
         return f'<Table {self.number}>'
@@ -179,22 +189,25 @@ class Order(db.Model):
     table_id = db.Column(db.Integer, db.ForeignKey('tables.id'))
     customer_name = db.Column(db.String(100))
     order_type = db.Column(db.String(20), default='dine_in')  # dine_in, takeaway, online
+    source = db.Column(db.String(30), default='pos')  # pos, grabfood, gofood, shopeefood, online
     status = db.Column(db.String(20), default='pending')  # pending, processing, completed, cancelled
     subtotal = db.Column(db.Integer, default=0)
     tax = db.Column(db.Integer, default=0)
     discount = db.Column(db.Integer, default=0)
     total = db.Column(db.Integer, default=0)
     notes = db.Column(db.Text)
+    branch_id = db.Column(db.Integer, db.ForeignKey('branches.id'), nullable=True)
     created_at = db.Column(db.DateTime, default=utc_now)
     updated_at = db.Column(db.DateTime, default=utc_now, onupdate=utc_now)
     
     items = db.relationship('OrderItem', backref='order', lazy='dynamic', cascade='all, delete-orphan')
     payment = db.relationship('Payment', backref='order', uselist=False, cascade='all, delete-orphan')
+    branch = db.relationship('Branch', backref=db.backref('orders', lazy='dynamic'))
     
     def calculate_totals(self):
         self.subtotal = sum(item.subtotal for item in self.items)
-        self.tax = int(self.subtotal * 0.10)  # 10% tax
-        self.total = self.subtotal + self.tax - self.discount
+        self.tax = 0
+        self.total = self.subtotal - self.discount
         
     def to_dict(self):
         return {
@@ -203,6 +216,7 @@ class Order(db.Model):
             'customer_name': self.customer_name,
             'table': self.table.number if self.table else None,
             'order_type': self.order_type,
+            'source': self.source,
             'status': self.status,
             'subtotal': self.subtotal,
             'tax': self.tax,
@@ -225,6 +239,7 @@ class OrderItem(db.Model):
     menu_item_id = db.Column(db.Integer, db.ForeignKey('menu_items.id'))
     name = db.Column(db.String(200), nullable=False)
     price = db.Column(db.Integer, nullable=False)
+    menu_price_snapshot = db.Column(db.Integer, nullable=True)  # Price from menu at time of order
     quantity = db.Column(db.Integer, default=1)
     subtotal = db.Column(db.Integer, nullable=False)
     spice_level = db.Column(db.String(20))  # none, mild, medium, hot, extra_hot
@@ -241,6 +256,7 @@ class OrderItem(db.Model):
             'menu_item_id': self.menu_item_id,
             'name': self.name,
             'price': self.price,
+            'menu_price_snapshot': self.menu_price_snapshot,
             'quantity': self.quantity,
             'subtotal': self.subtotal,
             'spice_level': self.spice_level,
@@ -299,6 +315,7 @@ class Income(db.Model):
     cash_income = db.Column(db.Integer, default=0)
     online_income = db.Column(db.Integer, default=0)
     notes = db.Column(db.Text)
+    branch_id = db.Column(db.Integer, db.ForeignKey('branches.id'), nullable=True)
     created_at = db.Column(db.DateTime, default=utc_now)
     updated_at = db.Column(db.DateTime, default=utc_now, onupdate=utc_now)
     
@@ -327,6 +344,7 @@ class Cart(db.Model):
     table_id = db.Column(db.Integer, db.ForeignKey('tables.id'), nullable=True)
     order_type = db.Column(db.String(20), default='dine_in')
     customer_name = db.Column(db.String(100))
+    branch_id = db.Column(db.Integer, db.ForeignKey('branches.id'), nullable=True)
     created_at = db.Column(db.DateTime, default=utc_now)
     updated_at = db.Column(db.DateTime, default=utc_now, onupdate=utc_now)
     
@@ -338,10 +356,10 @@ class Cart(db.Model):
         return sum(item.subtotal for item in self.items)
     
     def get_tax(self):
-        return int(self.get_subtotal() * 0.10)
+        return 0
     
     def get_total(self):
-        return self.get_subtotal() + self.get_tax()
+        return self.get_subtotal()
     
     def get_item_count(self):
         return sum(item.quantity for item in self.items)
@@ -419,6 +437,7 @@ class Discount(db.Model):
     start_date = db.Column(db.DateTime, nullable=True)  # Start date for promo
     end_date = db.Column(db.DateTime, nullable=True)  # End date for promo
     is_active = db.Column(db.Boolean, default=True)
+    branch_id = db.Column(db.Integer, db.ForeignKey('branches.id'), nullable=True)
     created_at = db.Column(db.DateTime, default=utc_now)
     updated_at = db.Column(db.DateTime, default=utc_now, onupdate=utc_now)
     
@@ -490,6 +509,204 @@ class Discount(db.Model):
         return f'<Discount {self.code}>'
 
 
+class City(db.Model):
+    """City/Kota model for multi-outlet hierarchy. Branch belongs to a City and a Brand."""
+    __tablename__ = 'cities'
+    
+    id = db.Column(db.Integer, primary_key=True)
+    name = db.Column(db.String(100), nullable=False, unique=True)
+    code = db.Column(db.String(20), unique=True, nullable=False)
+    is_active = db.Column(db.Boolean, default=True)
+    created_at = db.Column(db.DateTime, default=utc_now)
+    updated_at = db.Column(db.DateTime, default=utc_now, onupdate=utc_now)
+    
+    branches = db.relationship('Branch', backref='city', lazy='dynamic')
+    
+    def to_dict(self):
+        return {
+            'id': self.id,
+            'name': self.name,
+            'code': self.code,
+            'is_active': self.is_active,
+            'branch_count': self.branches.count(),
+            'created_at': self.created_at.isoformat() if self.created_at else None
+        }
+    
+    def __repr__(self):
+        return f'<City {self.name}>'
+
+
+class Brand(db.Model):
+    """Brand/Merek model for multi-outlet hierarchy. Branch belongs to a City and a Brand."""
+    __tablename__ = 'brands'
+    
+    id = db.Column(db.Integer, primary_key=True)
+    name = db.Column(db.String(100), nullable=False, unique=True)
+    code = db.Column(db.String(20), unique=True, nullable=False)
+    description = db.Column(db.Text)
+    logo = db.Column(db.String(255))
+    is_active = db.Column(db.Boolean, default=True)
+    created_at = db.Column(db.DateTime, default=utc_now)
+    updated_at = db.Column(db.DateTime, default=utc_now, onupdate=utc_now)
+    
+    branches = db.relationship('Branch', backref='brand', lazy='dynamic')
+    
+    def to_dict(self):
+        return {
+            'id': self.id,
+            'name': self.name,
+            'code': self.code,
+            'description': self.description,
+            'logo': self.logo,
+            'is_active': self.is_active,
+            'branch_count': self.branches.count(),
+            'created_at': self.created_at.isoformat() if self.created_at else None
+        }
+    
+    def __repr__(self):
+        return f'<Brand {self.name}>'
+
+
+class Branch(db.Model):
+    """Branch/Cabang model for multi-location restaurant management"""
+    __tablename__ = 'branches'
+    
+    id = db.Column(db.Integer, primary_key=True)
+    name = db.Column(db.String(100), nullable=False)
+    code = db.Column(db.String(20), unique=True, nullable=False)
+    address = db.Column(db.Text)
+    phone = db.Column(db.String(20))
+    manager_name = db.Column(db.String(100))
+    is_active = db.Column(db.Boolean, default=True)
+    opening_time = db.Column(db.String(5), default='08:00')
+    closing_time = db.Column(db.String(5), default='22:00')
+    city_id = db.Column(db.Integer, db.ForeignKey('cities.id'), nullable=True)
+    brand_id = db.Column(db.Integer, db.ForeignKey('brands.id'), nullable=True)
+    created_at = db.Column(db.DateTime, default=utc_now)
+    updated_at = db.Column(db.DateTime, default=utc_now, onupdate=utc_now)
+    
+    def to_dict(self):
+        return {
+            'id': self.id,
+            'name': self.name,
+            'code': self.code,
+            'address': self.address,
+            'phone': self.phone,
+            'manager_name': self.manager_name,
+            'is_active': self.is_active,
+            'opening_time': self.opening_time,
+            'closing_time': self.closing_time,
+            'city_id': self.city_id,
+            'city_name': self.city.name if self.city else None,
+            'brand_id': self.brand_id,
+            'brand_name': self.brand.name if self.brand else None,
+            'created_at': self.created_at.isoformat() if self.created_at else None
+        }
+    
+    def __repr__(self):
+        return f'<Branch {self.name}>'
+
+
+class BranchMenuStock(db.Model):
+    """Per-branch stock and availability for shared menu items"""
+    __tablename__ = 'branch_menu_stock'
+    __table_args__ = (db.UniqueConstraint('branch_id', 'menu_item_id', name='uq_branch_menu'),)
+    
+    id = db.Column(db.Integer, primary_key=True)
+    branch_id = db.Column(db.Integer, db.ForeignKey('branches.id'), nullable=False)
+    menu_item_id = db.Column(db.Integer, db.ForeignKey('menu_items.id'), nullable=False)
+    stock = db.Column(db.Integer, default=100)
+    is_available = db.Column(db.Boolean, default=True)
+    
+    branch = db.relationship('Branch', backref=db.backref('menu_stocks', lazy='dynamic'))
+    menu_item = db.relationship('MenuItem', backref=db.backref('branch_stocks', lazy='dynamic'))
+    
+    def __repr__(self):
+        return f'<BranchMenuStock branch={self.branch_id} item={self.menu_item_id} stock={self.stock}>'
+
+
+class CashierShift(db.Model):
+    """Shift management for cashier operations"""
+    __tablename__ = 'cashier_shifts'
+    
+    id = db.Column(db.Integer, primary_key=True)
+    user_id = db.Column(db.Integer, db.ForeignKey('users.id'), nullable=False)
+    start_time = db.Column(db.DateTime, nullable=False, default=utc_now)
+    end_time = db.Column(db.DateTime, nullable=True)
+    opening_cash = db.Column(db.Integer, default=0)
+    closing_cash = db.Column(db.Integer, nullable=True)
+    total_sales = db.Column(db.Integer, default=0)
+    total_orders = db.Column(db.Integer, default=0)
+    notes = db.Column(db.Text)
+    status = db.Column(db.String(20), default='open')  # open, closed
+    branch_id = db.Column(db.Integer, db.ForeignKey('branches.id'), nullable=True)
+    created_at = db.Column(db.DateTime, default=utc_now)
+    
+    user = db.relationship('User', backref=db.backref('shifts', lazy='dynamic'))
+    
+    def to_dict(self):
+        return {
+            'id': self.id,
+            'user_id': self.user_id,
+            'user_name': self.user.full_name or self.user.username if self.user else None,
+            'start_time': self.start_time.isoformat() if self.start_time else None,
+            'end_time': self.end_time.isoformat() if self.end_time else None,
+            'opening_cash': self.opening_cash,
+            'closing_cash': self.closing_cash,
+            'total_sales': self.total_sales,
+            'total_orders': self.total_orders,
+            'notes': self.notes,
+            'status': self.status,
+            'created_at': self.created_at.isoformat() if self.created_at else None
+        }
+    
+    def __repr__(self):
+        return f'<CashierShift {self.id} - {self.status}>'
+
+
+class Expense(db.Model):
+    """Expense tracking for restaurant operations"""
+    __tablename__ = 'expenses'
+    
+    id = db.Column(db.Integer, primary_key=True)
+    date = db.Column(db.Date, nullable=False, default=lambda: utc_now().date())
+    category = db.Column(db.String(50), nullable=False)  # ingredients, utilities, salary, supplies, maintenance, other
+    description = db.Column(db.String(255), nullable=False)
+    amount = db.Column(db.Integer, nullable=False)
+    notes = db.Column(db.Text)
+    user_id = db.Column(db.Integer, db.ForeignKey('users.id'), nullable=True)
+    branch_id = db.Column(db.Integer, db.ForeignKey('branches.id'), nullable=True)
+    created_at = db.Column(db.DateTime, default=utc_now)
+    updated_at = db.Column(db.DateTime, default=utc_now, onupdate=utc_now)
+    
+    user = db.relationship('User', backref=db.backref('expenses', lazy='dynamic'))
+    
+    CATEGORIES = {
+        'ingredients': 'Bahan Baku',
+        'utilities': 'Utilitas (Listrik/Air/Gas)',
+        'salary': 'Gaji Karyawan',
+        'supplies': 'Perlengkapan',
+        'maintenance': 'Perawatan',
+        'other': 'Lainnya'
+    }
+    
+    def to_dict(self):
+        return {
+            'id': self.id,
+            'date': self.date.isoformat() if self.date else None,
+            'category': self.category,
+            'category_label': self.CATEGORIES.get(self.category, self.category),
+            'description': self.description,
+            'amount': self.amount,
+            'notes': self.notes,
+            'user_name': (self.user.full_name or self.user.username) if self.user else None,
+            'created_at': self.created_at.isoformat() if self.created_at else None
+        }
+    
+    def __repr__(self):
+        return f'<Expense {self.id} - {self.category} - {self.amount}>'
+
+
 class Notification(db.Model):
     """Notification model for real-time alerts"""
     __tablename__ = 'notifications'
@@ -501,6 +718,7 @@ class Notification(db.Model):
     message = db.Column(db.Text)
     data = db.Column(db.Text)  # JSON data for additional info
     is_read = db.Column(db.Boolean, default=False)
+    branch_id = db.Column(db.Integer, db.ForeignKey('branches.id'), nullable=True)
     created_at = db.Column(db.DateTime, default=utc_now)
     read_at = db.Column(db.DateTime, nullable=True)
     
@@ -536,6 +754,7 @@ class PendingPrint(db.Model):
     status = db.Column(db.String(20), default='pending')  # pending, printing, completed, failed
     retry_count = db.Column(db.Integer, default=0)
     error_message = db.Column(db.Text, nullable=True)
+    branch_id = db.Column(db.Integer, db.ForeignKey('branches.id'), nullable=True)
     created_at = db.Column(db.DateTime, default=utc_now)
     updated_at = db.Column(db.DateTime, default=utc_now, onupdate=utc_now)
     printed_at = db.Column(db.DateTime, nullable=True)
@@ -560,3 +779,73 @@ class PendingPrint(db.Model):
     
     def __repr__(self):
         return f'<PendingPrint {self.id} order={self.order_id} status={self.status}>'
+
+
+class ExternalOrder(db.Model):
+    """Track orders received from external food delivery platforms"""
+    __tablename__ = 'external_orders'
+    
+    id = db.Column(db.Integer, primary_key=True)
+    platform = db.Column(db.String(30), nullable=False)  # grabfood, gofood, shopeefood
+    external_order_id = db.Column(db.String(100), nullable=False)
+    order_id = db.Column(db.Integer, db.ForeignKey('orders.id'), nullable=True)
+    raw_data = db.Column(db.Text)  # Store original webhook payload as JSON
+    status = db.Column(db.String(30), default='received')  # received, accepted, printed, failed
+    error_message = db.Column(db.Text, nullable=True)
+    signature_status = db.Column(db.String(20), default='unchecked')  # unchecked, valid, invalid, skipped
+    retry_count = db.Column(db.Integer, default=0)
+    last_retry_at = db.Column(db.DateTime, nullable=True)
+    branch_id = db.Column(db.Integer, db.ForeignKey('branches.id'), nullable=True)
+    created_at = db.Column(db.DateTime, default=utc_now)
+    processed_at = db.Column(db.DateTime, nullable=True)
+    accepted_at = db.Column(db.DateTime, nullable=True)
+    printed_at = db.Column(db.DateTime, nullable=True)
+    
+    order = db.relationship('Order', backref=db.backref('external_order', uselist=False))
+    branch = db.relationship('Branch', backref=db.backref('external_orders', lazy='dynamic'))
+    
+    def to_dict(self):
+        return {
+            'id': self.id,
+            'platform': self.platform,
+            'external_order_id': self.external_order_id,
+            'order_id': self.order_id,
+            'status': self.status,
+            'signature_status': self.signature_status,
+            'retry_count': self.retry_count,
+            'error_message': self.error_message,
+            'created_at': self.created_at.isoformat() if self.created_at else None,
+            'processed_at': self.processed_at.isoformat() if self.processed_at else None,
+            'accepted_at': self.accepted_at.isoformat() if self.accepted_at else None,
+            'printed_at': self.printed_at.isoformat() if self.printed_at else None
+        }
+    
+    def __repr__(self):
+        return f'<ExternalOrder {self.platform}:{self.external_order_id}>'
+
+
+class WebhookLog(db.Model):
+    """Log all webhook attempts including signature failures"""
+    __tablename__ = 'webhook_logs'
+    
+    id = db.Column(db.Integer, primary_key=True)
+    platform = db.Column(db.String(30), nullable=False)
+    request_ip = db.Column(db.String(45))
+    request_headers = db.Column(db.Text)  # JSON: relevant headers for debugging
+    request_body_hash = db.Column(db.String(64))  # SHA-256 hash of body (not the body itself for security)
+    signature_provided = db.Column(db.String(255))
+    signature_expected_hash = db.Column(db.String(64))  # Hash of expected (not the value itself)
+    result = db.Column(db.String(20), nullable=False)  # success, sig_invalid, sig_missing, error, rate_limited
+    error_detail = db.Column(db.Text, nullable=True)
+    external_order_id = db.Column(db.Integer, db.ForeignKey('external_orders.id'), nullable=True)
+    created_at = db.Column(db.DateTime, default=utc_now)
+    
+    def to_dict(self):
+        return {
+            'id': self.id,
+            'platform': self.platform,
+            'request_ip': self.request_ip,
+            'result': self.result,
+            'error_detail': self.error_detail,
+            'created_at': self.created_at.isoformat() if self.created_at else None
+        }

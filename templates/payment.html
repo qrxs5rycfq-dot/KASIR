@@ -149,6 +149,31 @@
                 </div>
                 
                 <!-- Pay Button -->
+                {% if active_gateway == 'qris_bri' %}
+                <button id="payButton" onclick="openBriQrisPayment()" 
+                        class="w-full py-4 bg-gradient-to-r from-orange-500 to-blue-600 text-white font-semibold rounded-xl 
+                               hover:from-orange-600 hover:to-blue-700 transition-all duration-200 
+                               flex items-center justify-center space-x-2 pulse-animation">
+                    <svg class="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 4v1m6 11h2m-6 0h-2v4m0-11v3m0 0h.01M12 12h4.01M16 20h4M4 12h4m12 0h.01M5 8h2a1 1 0 001-1V5a1 1 0 00-1-1H5a1 1 0 00-1 1v2a1 1 0 001 1zm12 0h2a1 1 0 001-1V5a1 1 0 00-1-1h-2a1 1 0 00-1 1v2a1 1 0 001 1zM5 20h2a1 1 0 001-1v-2a1 1 0 00-1-1H5a1 1 0 00-1 1v2a1 1 0 001 1z"></path>
+                    </svg>
+                    <span>Bayar dengan QRIS BRI</span>
+                </button>
+                
+                <!-- QRIS QR Code Display -->
+                <div id="qrisDisplay" class="hidden mt-4">
+                    <div class="text-center p-6 bg-white rounded-2xl">
+                        <p class="text-gray-800 font-semibold mb-3">Scan QR Code untuk Bayar</p>
+                        <img id="qrisImage" src="" alt="QRIS QR Code" class="mx-auto w-64 h-64">
+                        <p class="text-gray-500 text-sm mt-3">Gunakan aplikasi e-wallet atau mobile banking</p>
+                    </div>
+                    <button onclick="checkBriQrisStatus()" id="checkStatusBtn"
+                            class="w-full mt-3 py-3 bg-green-600 hover:bg-green-700 text-white font-semibold rounded-xl transition-colors">
+                        <i class="fas fa-sync-alt mr-2"></i> Cek Status Pembayaran
+                    </button>
+                    <div id="qrisStatusMsg" class="hidden mt-2 p-3 rounded-lg text-sm text-center"></div>
+                </div>
+                {% else %}
                 <button id="payButton" onclick="openPayment()" 
                         class="w-full py-4 bg-gradient-to-r from-primary-500 to-primary-600 text-white font-semibold rounded-xl 
                                hover:from-primary-600 hover:to-primary-700 transition-all duration-200 
@@ -158,6 +183,7 @@
                     </svg>
                     <span>Bayar Sekarang</span>
                 </button>
+                {% endif %}
                 
                 <!-- Back Button (hidden initially) -->
                 <a id="backButton" href="{{ url_for('orders') }}" 
@@ -170,7 +196,11 @@
             <!-- Footer -->
             <div class="text-center mt-6 text-gray-500 text-sm">
                 <p>Pembayaran aman dengan</p>
+                {% if active_gateway == 'qris_bri' %}
+                <p class="font-semibold text-gray-400">QRIS BRI Payment Gateway</p>
+                {% else %}
                 <p class="font-semibold text-gray-400">Midtrans Payment Gateway</p>
+                {% endif %}
             </div>
         </div>
     </div>
@@ -281,7 +311,6 @@
             if (order.discount > 0) {
                 commands.push(...encoder.encode(`Diskon:      Rp ${formatNumber(order.discount)}\n`));
             }
-            commands.push(...encoder.encode(`Pajak:       Rp ${formatNumber(order.tax)}\n`));
             commands.push(...ESC_POS.BOLD_ON);
             commands.push(...encoder.encode(`TOTAL:       Rp ${formatNumber(order.total)}\n`));
             commands.push(...ESC_POS.BOLD_OFF);
@@ -381,11 +410,101 @@
         }
         
         // Auto-open payment if snap token exists
-        {% if auto_pay %}
+        {% if auto_pay and active_gateway != 'qris_bri' %}
         window.onload = function() {
             setTimeout(openPayment, 500);
         };
         {% endif %}
+        
+        // BRI QRIS Payment functions
+        let qrisPollingInterval = null;
+        
+        async function openBriQrisPayment() {
+            const btn = document.getElementById('payButton');
+            btn.disabled = true;
+            btn.innerHTML = '<i class="fas fa-spinner fa-spin mr-2"></i>Generating QR Code...';
+            
+            try {
+                const response = await fetch('/api/payment/qris-bri/create', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ order_id: orderId })
+                });
+                
+                const data = await response.json();
+                
+                if (data.success && data.qr_image) {
+                    document.getElementById('qrisImage').src = data.qr_image;
+                    document.getElementById('qrisDisplay').classList.remove('hidden');
+                    btn.classList.add('hidden');
+                    
+                    // Auto-poll status every 5 seconds
+                    qrisPollingInterval = setInterval(checkBriQrisStatus, 5000);
+                } else {
+                    alert('Gagal generate QR: ' + (data.error || 'Unknown error'));
+                    btn.disabled = false;
+                    btn.innerHTML = '<i class="fas fa-qrcode mr-2"></i>Bayar dengan QRIS BRI';
+                }
+            } catch (error) {
+                alert('Error: ' + error.message);
+                btn.disabled = false;
+                btn.innerHTML = '<i class="fas fa-qrcode mr-2"></i>Bayar dengan QRIS BRI';
+            }
+        }
+        
+        async function checkBriQrisStatus() {
+            const statusMsg = document.getElementById('qrisStatusMsg');
+            const checkBtn = document.getElementById('checkStatusBtn');
+            checkBtn.innerHTML = '<i class="fas fa-spinner fa-spin mr-2"></i>Checking...';
+            
+            try {
+                const response = await fetch('/api/payment/qris-bri/status', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ order_id: orderId })
+                });
+                
+                const data = await response.json();
+                statusMsg.classList.remove('hidden');
+                
+                if (data.success && data.status === 'paid') {
+                    if (qrisPollingInterval) clearInterval(qrisPollingInterval);
+                    
+                    statusMsg.className = 'mt-2 p-3 rounded-lg text-sm text-center bg-green-500/20 text-green-400';
+                    statusMsg.innerHTML = '<i class="fas fa-check-circle mr-2"></i>Pembayaran berhasil!';
+                    
+                    showStatus('success');
+                    document.getElementById('qrisDisplay').classList.add('hidden');
+                    
+                    // Print receipt
+                    saveReceiptToServerQueue(orderData, 3);
+                    
+                    setTimeout(() => {
+                        window.location.href = "{{ url_for('orders') }}";
+                    }, 3000);
+                } else {
+                    statusMsg.className = 'mt-2 p-3 rounded-lg text-sm text-center bg-yellow-500/20 text-yellow-400';
+                    statusMsg.innerHTML = '<i class="fas fa-clock mr-2"></i>Menunggu pembayaran...';
+                }
+            } catch (error) {
+                statusMsg.classList.remove('hidden');
+                statusMsg.className = 'mt-2 p-3 rounded-lg text-sm text-center bg-red-500/20 text-red-400';
+                statusMsg.innerHTML = '<i class="fas fa-exclamation-circle mr-2"></i>Error: ' + error.message;
+            }
+            
+            checkBtn.innerHTML = '<i class="fas fa-sync-alt mr-2"></i> Cek Status Pembayaran';
+        }
+        
+        // Clean up polling when page is hidden or unloaded
+        document.addEventListener('visibilitychange', function() {
+            if (document.hidden && qrisPollingInterval) {
+                clearInterval(qrisPollingInterval);
+                qrisPollingInterval = null;
+            }
+        });
+        window.addEventListener('beforeunload', function() {
+            if (qrisPollingInterval) clearInterval(qrisPollingInterval);
+        });
     </script>
 </body>
 </html>

@@ -186,10 +186,6 @@
                     <span class="text-gray-400">Subtotal</span>
                     <span id="modal-subtotal" class="text-white">Rp 0</span>
                 </div>
-                <div class="flex justify-between text-sm">
-                    <span class="text-gray-400">Pajak (10%)</span>
-                    <span id="modal-tax" class="text-white">Rp 0</span>
-                </div>
                 <div class="flex justify-between text-lg font-bold pt-3 border-t border-white/10">
                     <span class="text-white">Total Bayar</span>
                     <span id="modal-total" class="text-primary-400">Rp 0</span>
@@ -528,8 +524,7 @@ function addItemToCart(id, name, price, spiceLevel, temperature, notes) {
 function updateCartUI() {
     const count = cart.reduce((sum, item) => sum + item.quantity, 0);
     const subtotal = cart.reduce((sum, item) => sum + (item.price * item.quantity), 0);
-    const tax = Math.round(subtotal * 0.10);
-    const total = subtotal + tax;
+    const total = subtotal;
     
     document.getElementById('cart-count').textContent = count;
     document.getElementById('cart-item-count').textContent = count;
@@ -537,7 +532,6 @@ function updateCartUI() {
     document.getElementById('cart-button').classList.toggle('hidden', cart.length === 0);
     
     document.getElementById('modal-subtotal').textContent = formatCurrency(subtotal);
-    document.getElementById('modal-tax').textContent = formatCurrency(tax);
     document.getElementById('modal-total').textContent = formatCurrency(total);
     
     const cartItemsEl = document.getElementById('cart-items');

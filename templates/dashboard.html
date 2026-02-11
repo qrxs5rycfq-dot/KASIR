@@ -38,7 +38,11 @@
                     </div>
                 </div>
                 <div class="mt-4 flex items-center text-sm">
-                    <span class="text-green-400"><i class="fas fa-arrow-up mr-1"></i>12%</span>
+                    {% if income_growth >= 0 %}
+                    <span class="text-green-400"><i class="fas fa-arrow-up mr-1"></i>{{ income_growth }}%</span>
+                    {% else %}
+                    <span class="text-red-400"><i class="fas fa-arrow-down mr-1"></i>{{ income_growth|abs }}%</span>
+                    {% endif %}
                     <span class="text-gray-500 ml-2">dari kemarin</span>
                 </div>
             </div>
@@ -55,7 +59,11 @@
                     </div>
                 </div>
                 <div class="mt-4 flex items-center text-sm">
-                    <span class="text-blue-400"><i class="fas fa-arrow-up mr-1"></i>8%</span>
+                    {% if orders_growth >= 0 %}
+                    <span class="text-blue-400"><i class="fas fa-arrow-up mr-1"></i>{{ orders_growth }}%</span>
+                    {% else %}
+                    <span class="text-red-400"><i class="fas fa-arrow-down mr-1"></i>{{ orders_growth|abs }}%</span>
+                    {% endif %}
                     <span class="text-gray-500 ml-2">dari kemarin</span>
                 </div>
             </div>
@@ -89,11 +97,49 @@
                     </div>
                 </div>
                 <div class="mt-4 flex items-center text-sm">
-                    <span class="text-purple-400"><i class="fas fa-arrow-up mr-1"></i>5%</span>
+                    {% if avg_growth >= 0 %}
+                    <span class="text-purple-400"><i class="fas fa-arrow-up mr-1"></i>{{ avg_growth }}%</span>
+                    {% else %}
+                    <span class="text-red-400"><i class="fas fa-arrow-down mr-1"></i>{{ avg_growth|abs }}%</span>
+                    {% endif %}
                     <span class="text-gray-500 ml-2">dari kemarin</span>
                 </div>
             </div>
         </div>
+        
+        <!-- Low Stock Warning -->
+        {% if low_stock_items %}
+        <div class="glass-card rounded-2xl p-6 mb-6 border border-yellow-500/30 animate-fade-in" style="animation-delay: 0.35s">
+            <div class="flex items-center justify-between mb-4">
+                <div class="flex items-center space-x-3">
+                    <div class="w-10 h-10 rounded-xl bg-yellow-500/20 flex items-center justify-center">
+                        <i class="fas fa-exclamation-triangle text-yellow-400"></i>
+                    </div>
+                    <div>
+                        <h2 class="text-lg font-semibold text-yellow-400">Stok Menipis</h2>
+                        <p class="text-gray-400 text-sm">{{ low_stock_items|length }} item perlu segera diisi ulang</p>
+                    </div>
+                </div>
+                <a href="{{ url_for('admin_menu') }}" class="text-primary-400 hover:text-primary-300 text-sm">Kelola Menu</a>
+            </div>
+            <div class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-3">
+                {% for item in low_stock_items[:6] %}
+                <div class="flex items-center justify-between p-3 glass rounded-xl">
+                    <div class="flex items-center space-x-3">
+                        <img src="{{ item.image }}" alt="{{ item.name }}" class="w-10 h-10 rounded-lg object-cover">
+                        <div>
+                            <p class="font-medium text-sm truncate max-w-[150px]">{{ item.name }}</p>
+                            <p class="text-gray-400 text-xs">{{ item.price|format_currency }}</p>
+                        </div>
+                    </div>
+                    <span class="px-2 py-1 rounded-full text-xs font-bold {% if item._branch_stock <= 0 %}bg-red-500/20 text-red-400{% elif item._branch_stock <= 5 %}bg-orange-500/20 text-orange-400{% else %}bg-yellow-500/20 text-yellow-400{% endif %}">
+                        {% if item._branch_stock <= 0 %}Habis{% else %}Sisa {{ item._branch_stock }}{% endif %}
+                    </span>
+                </div>
+                {% endfor %}
+            </div>
+        </div>
+        {% endif %}
         
         <div class="grid grid-cols-1 lg:grid-cols-3 gap-6">
             <!-- Menu Populer -->
