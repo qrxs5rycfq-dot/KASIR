@@ -14,10 +14,8 @@
         #sidebar.sidebar-collapsed .sidebar-section-title,
         #sidebar.sidebar-collapsed .sidebar-branch-text,
         #sidebar.sidebar-collapsed .sidebar-external-icon { display: none; }
-        #sidebar.sidebar-collapsed .sidebar-link,
-        #sidebar.sidebar-collapsed .sidebar-link-item { justify-content: center; padding-left: 0; padding-right: 0; }
-        #sidebar.sidebar-collapsed .sidebar-link i.w-5,
-        #sidebar.sidebar-collapsed .sidebar-link-item i.w-5 { width: auto; font-size: 1.1rem; }
+        #sidebar.sidebar-collapsed .sidebar-link { justify-content: center; padding-left: 0; padding-right: 0; }
+        #sidebar.sidebar-collapsed .sidebar-link i.w-5 { width: auto; font-size: 1.1rem; }
         #sidebar.sidebar-collapsed .sidebar-logo-text { display: none; }
         #sidebar.sidebar-collapsed .sidebar-logo-img { margin: 0 auto; }
         #sidebar.sidebar-collapsed .sidebar-inner { padding: 1rem 0.75rem; }
@@ -130,7 +128,7 @@
                     <span class="sidebar-label">Brand</span>
                 </a>
                 
-                <a href="{{ url_for('printer_station') }}" title="Printer Station" target="_blank" class="sidebar-link-item flex items-center space-x-3 px-4 py-3 rounded-xl text-gray-400 hover:text-white">
+                <a href="{{ url_for('printer_station') }}" title="Printer Station" target="_blank" class="sidebar-link flex items-center space-x-3 px-4 py-3 rounded-xl text-gray-400 hover:text-white">
                     <i class="fas fa-print w-5"></i>
                     <span class="sidebar-label">Printer Station</span>
                     <i class="sidebar-external-icon fas fa-external-link-alt text-xs ml-auto"></i>
@@ -206,15 +204,13 @@ function toggleDesktopSidebar() {
 }
 
 function updateMainContentMargin(collapsed) {
-    // Update all main content areas that use md:ml-64
-    const mainEls = document.querySelectorAll('main, [class*="md\\:ml-64"]');
+    // Update main content areas - select <main> elements which is the standard content wrapper
+    const mainEls = document.querySelectorAll('main');
     mainEls.forEach(el => {
         if (collapsed) {
-            el.style.marginLeft = '';
             el.classList.remove('md:ml-64');
             el.classList.add('md:ml-20');
         } else {
-            el.style.marginLeft = '';
             el.classList.remove('md:ml-20');
             el.classList.add('md:ml-64');
         }
