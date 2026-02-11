@@ -1423,6 +1423,13 @@ def generate_midtrans_snap_token(order, midtrans_order_id):
         print(f"Midtrans connection error: {e}")
         return None
 
+@app.route('/api/order/<int:order_id>', methods=['GET'])
+@login_required
+def api_get_order(order_id):
+    """Get order details by ID for the view modal."""
+    order = Order.query.get_or_404(order_id)
+    return jsonify(order.to_dict())
+
 @app.route('/api/order/<int:order_id>/status', methods=['PUT'])
 @login_required
 def api_update_order_status(order_id):
