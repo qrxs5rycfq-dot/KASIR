@@ -3538,8 +3538,10 @@ def income_report():
 def export_pdf():
     from reportlab.lib import colors
     from reportlab.lib.pagesizes import A4
-    from reportlab.platypus import SimpleDocTemplate, Table as PDFTable, TableStyle, Paragraph, Spacer
-    from reportlab.lib.styles import getSampleStyleSheet
+    from reportlab.lib.units import mm, cm
+    from reportlab.platypus import SimpleDocTemplate, Table as PDFTable, TableStyle, Paragraph, Spacer, HRFlowable
+    from reportlab.lib.styles import getSampleStyleSheet, ParagraphStyle
+    from reportlab.lib.enums import TA_CENTER, TA_RIGHT, TA_LEFT
     
     start_date = request.args.get('start_date', datetime.now().strftime('%Y-%m-01'))
     end_date = request.args.get('end_date', datetime.now().strftime('%Y-%m-%d'))
@@ -3550,44 +3552,151 @@ def export_pdf():
     ).all()
     
     paid_orders = [o for o in orders if o.payment and o.payment.status == 'paid']
+    total_revenue = sum(o.total for o in paid_orders)
+    total_orders = len(paid_orders)
+    avg_order = total_revenue // total_orders if total_orders > 0 else 0
+    
+    # Payment method breakdown
+    payment_methods = {}
+    for o in paid_orders:
+        method = o.payment.payment_method if o.payment else 'cash'
+        payment_methods[method] = payment_methods.get(method, 0) + 1
     
     buffer = BytesIO()
-    doc = SimpleDocTemplate(buffer, pagesize=A4)
+    doc = SimpleDocTemplate(buffer, pagesize=A4,
+                           topMargin=1.5*cm, bottomMargin=1.5*cm,
+                           leftMargin=1.5*cm, rightMargin=1.5*cm)
     elements = []
     styles = getSampleStyleSheet()
     
-    # Title
-    elements.append(Paragraph(f"Laporan Penjualan", styles['Heading1']))
-    elements.append(Paragraph(f"Periode: {start_date} - {end_date}", styles['Normal']))
-    elements.append(Spacer(1, 20))
+    # Custom styles
+    title_style = ParagraphStyle('CustomTitle', parent=styles['Heading1'],
+                                fontSize=20, textColor=colors.HexColor('#1a1a2e'),
+                                spaceAfter=4)
+    subtitle_style = ParagraphStyle('Subtitle', parent=styles['Normal'],
+                                   fontSize=10, textColor=colors.HexColor('#666666'))
+    header_style = ParagraphStyle('SectionHeader', parent=styles['Heading2'],
+                                 fontSize=13, textColor=colors.HexColor('#1a1a2e'),
+                                 spaceBefore=14, spaceAfter=8)
     
-    # Table data
-    data = [['No', 'Tanggal', 'Order ID', 'Total']]
+    brand_color = colors.HexColor('#f97316')
+    dark_bg = colors.HexColor('#1a1a2e')
+    light_bg = colors.HexColor('#f8f9fa')
+    
+    # Header
+    elements.append(Paragraph("Dapoer Teras Obor", title_style))
+    elements.append(Paragraph(f"Laporan Penjualan | Periode: {start_date} s/d {end_date}", subtitle_style))
+    branch_name = current_user.branch.name if current_user.branch_id and current_user.branch else "Semua Cabang"
+    elements.append(Paragraph(f"Cabang: {branch_name} | Dicetak: {datetime.now().strftime('%d/%m/%Y %H:%M')}", subtitle_style))
+    elements.append(Spacer(1, 6))
+    elements.append(HRFlowable(width="100%", thickness=2, color=brand_color))
+    elements.append(Spacer(1, 10))
+    
+    # Summary cards as a table
+    def fmt_rp(val):
+        return f"Rp {val:,.0f}".replace(',', '.')
+    
+    summary_data = [
+        ['Total Pendapatan', 'Jumlah Transaksi', 'Rata-rata Transaksi'],
+        [fmt_rp(total_revenue), str(total_orders), fmt_rp(avg_order)]
+    ]
+    summary_table = PDFTable(summary_data, colWidths=[6*cm, 5.5*cm, 5.5*cm])
+    summary_table.setStyle(TableStyle([
+        ('BACKGROUND', (0, 0), (-1, 0), dark_bg),
+        ('TEXTCOLOR', (0, 0), (-1, 0), colors.white),
+        ('FONTNAME', (0, 0), (-1, 0), 'Helvetica'),
+        ('FONTSIZE', (0, 0), (-1, 0), 9),
+        ('BACKGROUND', (0, 1), (-1, 1), light_bg),
+        ('TEXTCOLOR', (0, 1), (-1, 1), dark_bg),
+        ('FONTNAME', (0, 1), (-1, 1), 'Helvetica-Bold'),
+        ('FONTSIZE', (0, 1), (-1, 1), 14),
+        ('ALIGN', (0, 0), (-1, -1), 'CENTER'),
+        ('VALIGN', (0, 0), (-1, -1), 'MIDDLE'),
+        ('TOPPADDING', (0, 0), (-1, -1), 8),
+        ('BOTTOMPADDING', (0, 0), (-1, -1), 8),
+        ('BOX', (0, 0), (-1, -1), 1, colors.HexColor('#dee2e6')),
+        ('LINEBELOW', (0, 0), (-1, 0), 1, brand_color),
+    ]))
+    elements.append(summary_table)
+    elements.append(Spacer(1, 12))
+    
+    # Payment methods breakdown
+    if payment_methods:
+        elements.append(Paragraph("Metode Pembayaran", header_style))
+        pm_data = [['Metode', 'Jumlah', 'Persentase']]
+        for method, count in sorted(payment_methods.items(), key=lambda x: -x[1]):
+            pct = (count / total_orders * 100) if total_orders > 0 else 0
+            pm_data.append([method.upper(), str(count), f"{pct:.1f}%"])
+        pm_table = PDFTable(pm_data, colWidths=[7*cm, 5*cm, 5*cm])
+        pm_table.setStyle(TableStyle([
+            ('BACKGROUND', (0, 0), (-1, 0), dark_bg),
+            ('TEXTCOLOR', (0, 0), (-1, 0), colors.white),
+            ('FONTNAME', (0, 0), (-1, 0), 'Helvetica-Bold'),
+            ('FONTSIZE', (0, 0), (-1, 0), 9),
+            ('ALIGN', (1, 0), (-1, -1), 'CENTER'),
+            ('TOPPADDING', (0, 0), (-1, -1), 6),
+            ('BOTTOMPADDING', (0, 0), (-1, -1), 6),
+            ('GRID', (0, 0), (-1, -1), 0.5, colors.HexColor('#dee2e6')),
+            ('ROWBACKGROUNDS', (0, 1), (-1, -1), [colors.white, light_bg]),
+        ]))
+        elements.append(pm_table)
+        elements.append(Spacer(1, 12))
+    
+    # Transaction detail table
+    elements.append(Paragraph("Detail Transaksi", header_style))
+    data = [['No', 'Tanggal', 'Order ID', 'Customer', 'Metode', 'Total']]
     for i, order in enumerate(paid_orders, 1):
         data.append([
             str(i),
-            order.created_at.strftime('%Y-%m-%d %H:%M'),
+            order.created_at.strftime('%d/%m/%Y %H:%M'),
             order.order_number,
-            f"Rp {order.total:,}".replace(',', '.')
+            (order.customer_name or 'Guest')[:20],
+            (order.payment.payment_method if order.payment else '-').upper(),
+            fmt_rp(order.total)
         ])
     
     # Total row
-    total = sum(o.total for o in paid_orders)
-    data.append(['', '', 'TOTAL', f"Rp {total:,}".replace(',', '.')])
+    data.append(['', '', '', '', 'TOTAL', fmt_rp(total_revenue)])
     
-    table = PDFTable(data)
+    col_widths = [1.2*cm, 3.2*cm, 3*cm, 3.5*cm, 2.5*cm, 3.6*cm]
+    table = PDFTable(data, colWidths=col_widths, repeatRows=1)
     table.setStyle(TableStyle([
-        ('BACKGROUND', (0, 0), (-1, 0), colors.grey),
-        ('TEXTCOLOR', (0, 0), (-1, 0), colors.whitesmoke),
-        ('ALIGN', (0, 0), (-1, -1), 'CENTER'),
+        # Header
+        ('BACKGROUND', (0, 0), (-1, 0), dark_bg),
+        ('TEXTCOLOR', (0, 0), (-1, 0), colors.white),
         ('FONTNAME', (0, 0), (-1, 0), 'Helvetica-Bold'),
-        ('FONTSIZE', (0, 0), (-1, 0), 12),
-        ('BOTTOMPADDING', (0, 0), (-1, 0), 12),
-        ('BACKGROUND', (0, -1), (-1, -1), colors.lightgrey),
+        ('FONTSIZE', (0, 0), (-1, 0), 8),
+        ('TOPPADDING', (0, 0), (-1, 0), 8),
+        ('BOTTOMPADDING', (0, 0), (-1, 0), 8),
+        # Body
+        ('FONTNAME', (0, 1), (-1, -2), 'Helvetica'),
+        ('FONTSIZE', (0, 1), (-1, -2), 8),
+        ('TOPPADDING', (0, 1), (-1, -1), 5),
+        ('BOTTOMPADDING', (0, 1), (-1, -1), 5),
+        ('ROWBACKGROUNDS', (0, 1), (-1, -2), [colors.white, light_bg]),
+        # Total row
+        ('BACKGROUND', (0, -1), (-1, -1), colors.HexColor('#e8f5e9')),
         ('FONTNAME', (0, -1), (-1, -1), 'Helvetica-Bold'),
-        ('GRID', (0, 0), (-1, -1), 1, colors.black)
+        ('FONTSIZE', (0, -1), (-1, -1), 9),
+        ('LINEABOVE', (0, -1), (-1, -1), 1.5, dark_bg),
+        # Alignment
+        ('ALIGN', (0, 0), (0, -1), 'CENTER'),
+        ('ALIGN', (-1, 0), (-1, -1), 'RIGHT'),
+        ('ALIGN', (-2, 0), (-2, -1), 'CENTER'),
+        # Grid
+        ('GRID', (0, 0), (-1, -1), 0.5, colors.HexColor('#dee2e6')),
+        ('BOX', (0, 0), (-1, -1), 1, colors.HexColor('#adb5bd')),
     ]))
     elements.append(table)
+    
+    # Footer
+    elements.append(Spacer(1, 16))
+    elements.append(HRFlowable(width="100%", thickness=1, color=colors.HexColor('#dee2e6')))
+    footer_style = ParagraphStyle('Footer', parent=styles['Normal'],
+                                  fontSize=8, textColor=colors.HexColor('#999999'),
+                                  alignment=TA_CENTER)
+    elements.append(Spacer(1, 4))
+    elements.append(Paragraph("Dokumen ini digenerate otomatis oleh Sistem Kasir Dapoer Teras Obor", footer_style))
     
     doc.build(elements)
     buffer.seek(0)
@@ -3604,7 +3713,8 @@ def export_pdf():
 @role_required('admin', 'manager')
 def export_excel():
     from openpyxl import Workbook
-    from openpyxl.styles import Font, Alignment, Border, Side, PatternFill
+    from openpyxl.styles import Font, Alignment, Border, Side, PatternFill, numbers
+    from openpyxl.utils import get_column_letter
     
     start_date = request.args.get('start_date', datetime.now().strftime('%Y-%m-01'))
     end_date = request.args.get('end_date', datetime.now().strftime('%Y-%m-%d'))
@@ -3615,37 +3725,157 @@ def export_excel():
     ).all()
     
     paid_orders = [o for o in orders if o.payment and o.payment.status == 'paid']
+    total_revenue = sum(o.total for o in paid_orders)
+    total_orders_count = len(paid_orders)
+    avg_order = total_revenue // total_orders_count if total_orders_count > 0 else 0
     
     wb = Workbook()
     ws = wb.active
     ws.title = "Laporan Penjualan"
     
-    # Header
-    ws['A1'] = 'Laporan Penjualan'
-    ws['A1'].font = Font(bold=True, size=16)
-    ws['A2'] = f'Periode: {start_date} - {end_date}'
+    # Colors & styles
+    brand_fill = PatternFill(start_color="F97316", end_color="F97316", fill_type="solid")
+    dark_fill = PatternFill(start_color="1A1A2E", end_color="1A1A2E", fill_type="solid")
+    light_fill = PatternFill(start_color="F8F9FA", end_color="F8F9FA", fill_type="solid")
+    green_fill = PatternFill(start_color="E8F5E9", end_color="E8F5E9", fill_type="solid")
+    summary_fill = PatternFill(start_color="FFF3E0", end_color="FFF3E0", fill_type="solid")
+    white_font = Font(color="FFFFFF", bold=True)
+    dark_font = Font(color="1A1A2E", bold=True)
+    header_font = Font(color="1A1A2E", bold=True, size=18)
+    sub_font = Font(color="666666", size=10)
+    thin_border = Border(
+        left=Side(style='thin', color='DEE2E6'),
+        right=Side(style='thin', color='DEE2E6'),
+        top=Side(style='thin', color='DEE2E6'),
+        bottom=Side(style='thin', color='DEE2E6')
+    )
+    center_align = Alignment(horizontal='center', vertical='center')
+    right_align = Alignment(horizontal='right', vertical='center')
     
-    # Column headers
-    headers = ['No', 'Tanggal', 'Order ID', 'Customer', 'Subtotal', 'Total', 'Payment Method']
+    # Column widths
+    col_widths = {'A': 6, 'B': 18, 'C': 16, 'D': 20, 'E': 14, 'F': 18, 'G': 14}
+    for col_letter, width in col_widths.items():
+        ws.column_dimensions[col_letter].width = width
+    
+    # Header row 1 - Brand
+    ws.merge_cells('A1:G1')
+    cell = ws['A1']
+    cell.value = 'DAPOER TERAS OBOR'
+    cell.font = header_font
+    cell.alignment = Alignment(horizontal='center', vertical='center')
+    ws.row_dimensions[1].height = 30
+    
+    # Header row 2 - Report info
+    ws.merge_cells('A2:G2')
+    branch_name = current_user.branch.name if current_user.branch_id and current_user.branch else "Semua Cabang"
+    ws['A2'] = f'Laporan Penjualan | {start_date} s/d {end_date} | Cabang: {branch_name}'
+    ws['A2'].font = sub_font
+    ws['A2'].alignment = Alignment(horizontal='center')
+    
+    # Brand accent line
+    for col in range(1, 8):
+        cell = ws.cell(row=3, column=col)
+        cell.fill = brand_fill
+    ws.row_dimensions[3].height = 4
+    
+    # Summary section (row 5-6)
+    summary_labels = ['Total Pendapatan', 'Jumlah Transaksi', 'Rata-rata Transaksi']
+    summary_values = [total_revenue, total_orders_count, avg_order]
+    summary_cols = [(1, 2), (3, 4), (5, 6)]
+    
+    for i, ((c1, c2), label, val) in enumerate(zip(summary_cols, summary_labels, summary_values)):
+        ws.merge_cells(start_row=5, start_column=c1, end_row=5, end_column=c2)
+        cell = ws.cell(row=5, column=c1, value=label)
+        cell.fill = dark_fill
+        cell.font = Font(color="FFFFFF", size=9)
+        cell.alignment = center_align
+        ws.cell(row=5, column=c2).fill = dark_fill
+        
+        ws.merge_cells(start_row=6, start_column=c1, end_row=6, end_column=c2)
+        val_cell = ws.cell(row=6, column=c1, value=val)
+        val_cell.fill = summary_fill
+        val_cell.font = Font(color="1A1A2E", bold=True, size=13)
+        val_cell.alignment = center_align
+        ws.cell(row=6, column=c2).fill = summary_fill
+        if i != 1:  # Format as currency except count
+            val_cell.number_format = '#,##0'
+    
+    ws.row_dimensions[5].height = 22
+    ws.row_dimensions[6].height = 28
+    
+    # Blank row
+    # Detail header (row 8)
+    ws.merge_cells('A8:G8')
+    ws['A8'] = 'Detail Transaksi'
+    ws['A8'].font = Font(color="1A1A2E", bold=True, size=12)
+    
+    # Column headers (row 9)
+    headers = ['No', 'Tanggal', 'Order ID', 'Customer', 'Metode', 'Total', 'Status']
     for col, header in enumerate(headers, 1):
-        cell = ws.cell(row=4, column=col, value=header)
-        cell.font = Font(bold=True)
-        cell.fill = PatternFill(start_color="CCCCCC", end_color="CCCCCC", fill_type="solid")
+        cell = ws.cell(row=9, column=col, value=header)
+        cell.fill = dark_fill
+        cell.font = white_font
+        cell.alignment = center_align
+        cell.border = thin_border
+    ws.row_dimensions[9].height = 22
     
-    # Data
-    for row, order in enumerate(paid_orders, 5):
-        ws.cell(row=row, column=1, value=row-4)
-        ws.cell(row=row, column=2, value=order.created_at.strftime('%Y-%m-%d %H:%M'))
-        ws.cell(row=row, column=3, value=order.order_number)
-        ws.cell(row=row, column=4, value=order.customer_name or '-')
-        ws.cell(row=row, column=5, value=order.subtotal)
-        ws.cell(row=row, column=6, value=order.total)
-        ws.cell(row=row, column=7, value=order.payment.payment_method if order.payment else '-')
+    # Data rows
+    for row_idx, order in enumerate(paid_orders, 10):
+        row_num = row_idx - 9
+        bg = light_fill if row_num % 2 == 0 else PatternFill()
+        
+        cells_data = [
+            row_num,
+            order.created_at.strftime('%d/%m/%Y %H:%M'),
+            order.order_number,
+            order.customer_name or 'Guest',
+            (order.payment.payment_method if order.payment else '-').upper(),
+            order.total,
+            'LUNAS'
+        ]
+        
+        for col, value in enumerate(cells_data, 1):
+            cell = ws.cell(row=row_idx, column=col, value=value)
+            cell.border = thin_border
+            if row_num % 2 == 0:
+                cell.fill = bg
+            if col == 1:
+                cell.alignment = center_align
+            elif col == 5 or col == 7:
+                cell.alignment = center_align
+            elif col == 6:
+                cell.alignment = right_align
+                cell.number_format = '#,##0'
     
-    # Total
-    total_row = len(paid_orders) + 5
-    ws.cell(row=total_row, column=5, value='TOTAL').font = Font(bold=True)
-    ws.cell(row=total_row, column=6, value=sum(o.total for o in paid_orders)).font = Font(bold=True)
+    # Total row
+    total_row = len(paid_orders) + 10
+    ws.merge_cells(start_row=total_row, start_column=1, end_row=total_row, end_column=5)
+    total_label = ws.cell(row=total_row, column=1, value='TOTAL')
+    total_label.font = Font(bold=True, size=11)
+    total_label.alignment = Alignment(horizontal='right', vertical='center')
+    total_label.fill = green_fill
+    total_label.border = thin_border
+    for c in range(2, 6):
+        ws.cell(row=total_row, column=c).fill = green_fill
+        ws.cell(row=total_row, column=c).border = thin_border
+    
+    total_val = ws.cell(row=total_row, column=6, value=total_revenue)
+    total_val.font = Font(bold=True, size=11)
+    total_val.alignment = right_align
+    total_val.fill = green_fill
+    total_val.number_format = '#,##0'
+    total_val.border = thin_border
+    ws.cell(row=total_row, column=7).fill = green_fill
+    ws.cell(row=total_row, column=7).border = thin_border
+    ws.row_dimensions[total_row].height = 24
+    
+    # Footer
+    footer_row = total_row + 2
+    ws.merge_cells(start_row=footer_row, start_column=1, end_row=footer_row, end_column=7)
+    ws.cell(row=footer_row, column=1, 
+            value=f'Digenerate otomatis oleh Sistem Kasir Dapoer Teras Obor | {datetime.now().strftime("%d/%m/%Y %H:%M")}')
+    ws.cell(row=footer_row, column=1).font = Font(color="999999", size=8, italic=True)
+    ws.cell(row=footer_row, column=1).alignment = Alignment(horizontal='center')
     
     buffer = BytesIO()
     wb.save(buffer)
@@ -3708,10 +3938,14 @@ def payment_page(order_id):
         except Exception as e:
             print(f"Error generating snap token: {e}")
     
+    # Determine active gateway
+    active_gateway = get_setting('active_payment_gateway', 'midtrans')
+    
     return render_template('payment.html', 
                          order=order, 
                          snap_token=snap_token or '',
                          auto_pay=bool(snap_token),
+                         active_gateway=active_gateway,
                          config=app.config)
 
 # API to update payment status from frontend
@@ -4894,26 +5128,77 @@ def admin_integrations():
 
 
 # ========== PAYMENT GATEWAY ADMIN ==========
+
+def get_setting(key, default=None):
+    """Get a setting value from the database"""
+    s = Setting.query.filter_by(key=key).first()
+    return s.value if s else default
+
+def set_setting(key, value, description=None):
+    """Set a setting value in the database"""
+    s = Setting.query.filter_by(key=key).first()
+    if s:
+        s.value = value
+    else:
+        s = Setting(key=key, value=value, description=description)
+        db.session.add(s)
+    db.session.commit()
+
 @app.route('/admin/payment-gateway')
 @login_required
 @role_required('admin')
 def admin_payment_gateway():
-    """Payment gateway settings page"""
-    # Get current settings
+    """Payment gateway settings page with Midtrans & BRI QRIS"""
+    # Midtrans config
     server_key = app.config.get('MIDTRANS_SERVER_KEY', '')
     client_key = app.config.get('MIDTRANS_CLIENT_KEY', '')
     is_production = app.config.get('MIDTRANS_IS_PRODUCTION', False)
     
-    # Mask keys for display
     masked_server_key = server_key[:8] + '****' + server_key[-4:] if len(server_key) > 12 else '****'
     masked_client_key = client_key[:8] + '****' + client_key[-4:] if len(client_key) > 12 else '****'
+    
+    # BRI QRIS config
+    bri_client_id = os.environ.get('BRI_CLIENT_ID', '')
+    bri_client_secret = os.environ.get('BRI_CLIENT_SECRET', '')
+    bri_merchant_id = os.environ.get('BRI_MERCHANT_ID', '')
+    bri_terminal_id = os.environ.get('BRI_TERMINAL_ID', '')
+    bri_is_production = os.environ.get('BRI_IS_PRODUCTION', 'false').lower() == 'true'
+    bri_private_key_path = os.environ.get('BRI_PRIVATE_KEY_PATH', '')
+    
+    masked_bri_client_id = bri_client_id[:8] + '****' + bri_client_id[-4:] if len(bri_client_id) > 12 else ('****' if bri_client_id else '')
+    masked_bri_secret = bri_client_secret[:4] + '****' if len(bri_client_secret) > 4 else ('****' if bri_client_secret else '')
+    
+    # Active gateway from DB setting
+    active_gateway = get_setting('active_payment_gateway', 'midtrans')
     
     return render_template('admin/payment_gateway.html',
                          masked_server_key=masked_server_key,
                          masked_client_key=masked_client_key,
                          is_production=is_production,
                          is_configured=bool(server_key and client_key),
+                         bri_client_id=masked_bri_client_id,
+                         bri_client_secret=masked_bri_secret,
+                         bri_merchant_id=bri_merchant_id,
+                         bri_terminal_id=bri_terminal_id,
+                         bri_is_production=bri_is_production,
+                         bri_is_configured=bool(bri_client_id and bri_client_secret and bri_merchant_id),
+                         bri_private_key_path=bri_private_key_path,
+                         active_gateway=active_gateway,
                          active_page='admin_payment_gateway')
+
+
+@app.route('/api/payment-gateway/set-active', methods=['POST'])
+@login_required
+@role_required('admin')
+def api_set_active_gateway():
+    """Toggle active payment gateway between midtrans and qris_bri"""
+    data = request.json
+    gateway = data.get('gateway', 'midtrans')
+    if gateway not in ('midtrans', 'qris_bri'):
+        return jsonify({'success': False, 'message': 'Gateway tidak valid'}), 400
+    
+    set_setting('active_payment_gateway', gateway, 'Active payment gateway (midtrans or qris_bri)')
+    return jsonify({'success': True, 'message': f'Payment gateway diubah ke {gateway.upper()}', 'active': gateway})
 
 
 @app.route('/api/payment-gateway/test', methods=['POST'])
@@ -4921,7 +5206,6 @@ def admin_payment_gateway():
 @role_required('admin')
 def api_test_payment_gateway():
     """Test Midtrans API connection"""
-    import base64
     import requests
     
     server_key = app.config.get('MIDTRANS_SERVER_KEY', '')
@@ -4933,14 +5217,12 @@ def api_test_payment_gateway():
             'message': 'Server Key belum dikonfigurasi'
         })
     
-    # Choose the correct API URL
     if is_production:
         api_url = 'https://api.midtrans.com/v2/ping'
     else:
         api_url = 'https://api.sandbox.midtrans.com/v2/ping'
     
     try:
-        # Create auth header
         auth_string = base64.b64encode(f'{server_key}:'.encode()).decode()
         headers = {
             'Authorization': f'Basic {auth_string}',
@@ -4969,6 +5251,266 @@ def api_test_payment_gateway():
         return jsonify({
             'success': False,
             'message': f'Error: {str(e)}'
+        })
+
+
+# ========== BRI QRIS API ==========
+
+def bri_get_access_token():
+    """Get BRI API access token using OAuth2 client credentials with RSA signature"""
+    import requests
+    from datetime import timezone
+    
+    client_id = os.environ.get('BRI_CLIENT_ID', '')
+    client_secret = os.environ.get('BRI_CLIENT_SECRET', '')
+    private_key_path = os.environ.get('BRI_PRIVATE_KEY_PATH', '')
+    is_production = os.environ.get('BRI_IS_PRODUCTION', 'false').lower() == 'true'
+    
+    if not client_id or not client_secret:
+        return None, 'BRI_CLIENT_ID atau BRI_CLIENT_SECRET belum dikonfigurasi'
+    
+    base_url = 'https://partner.api.bri.co.id' if is_production else 'https://sandbox.partner.api.bri.co.id'
+    
+    timestamp = datetime.now(timezone.utc).strftime('%Y-%m-%dT%H:%M:%S.000+07:00')
+    
+    # Generate signature: SHA256withRSA(client_id + "|" + timestamp)
+    signature = ''
+    if private_key_path and os.path.exists(private_key_path):
+        try:
+            from cryptography.hazmat.primitives import hashes, serialization
+            from cryptography.hazmat.primitives.asymmetric import padding
+            
+            with open(private_key_path, 'rb') as f:
+                private_key = serialization.load_pem_private_key(f.read(), password=None)
+            
+            string_to_sign = f"{client_id}|{timestamp}"
+            sig_bytes = private_key.sign(
+                string_to_sign.encode('utf-8'),
+                padding.PKCS1v15(),
+                hashes.SHA256()
+            )
+            signature = base64.b64encode(sig_bytes).decode('utf-8')
+        except Exception as e:
+            return None, f'Gagal generate signature RSA: {str(e)}'
+    else:
+        # Sandbox mode: some implementations use client_secret-based auth
+        import hashlib
+        string_to_sign = f"{client_id}|{timestamp}"
+        signature = base64.b64encode(
+            hashlib.sha256(f"{string_to_sign}|{client_secret}".encode()).digest()
+        ).decode('utf-8')
+    
+    try:
+        resp = requests.post(
+            f'{base_url}/snap/v1.0/access-token/b2b',
+            json={'grantType': 'client_credentials'},
+            headers={
+                'Content-Type': 'application/json',
+                'X-CLIENT-KEY': client_id,
+                'X-TIMESTAMP': timestamp,
+                'X-SIGNATURE': signature,
+            },
+            timeout=15
+        )
+        
+        if resp.status_code == 200:
+            data = resp.json()
+            return data.get('accessToken'), None
+        else:
+            return None, f'BRI token error: HTTP {resp.status_code} - {resp.text[:200]}'
+    except Exception as e:
+        return None, f'BRI connection error: {str(e)}'
+
+
+@app.route('/api/payment/qris-bri/create', methods=['POST'])
+@login_required
+def api_create_qris_bri():
+    """Generate BRI QRIS MPM Dynamic QR code for an order"""
+    import requests
+    from datetime import timezone
+    
+    data = request.json
+    order_id = data.get('order_id')
+    order = Order.query.get_or_404(order_id)
+    
+    merchant_id = os.environ.get('BRI_MERCHANT_ID', '')
+    terminal_id = os.environ.get('BRI_TERMINAL_ID', '')
+    is_production = os.environ.get('BRI_IS_PRODUCTION', 'false').lower() == 'true'
+    
+    if not merchant_id or not terminal_id:
+        return jsonify({'success': False, 'error': 'BRI Merchant ID atau Terminal ID belum dikonfigurasi'}), 400
+    
+    # Get access token
+    access_token, err = bri_get_access_token()
+    if not access_token:
+        return jsonify({'success': False, 'error': err}), 400
+    
+    base_url = 'https://partner.api.bri.co.id' if is_production else 'https://sandbox.partner.api.bri.co.id'
+    partner_ref = f"DTO-{order.order_number}-{int(datetime.now().timestamp())}"
+    
+    try:
+        timestamp = datetime.now(timezone.utc).strftime('%Y-%m-%dT%H:%M:%S.000+07:00')
+        
+        payload = {
+            'partnerReferenceNo': partner_ref,
+            'amount': f"{order.total}.00",
+            'currency': 'IDR',
+            'merchantId': merchant_id,
+            'terminalId': terminal_id,
+            'additionalInfo': {
+                'billInfo': [
+                    {'label': 'OrderId', 'value': order.order_number},
+                    {'label': 'Customer', 'value': order.customer_name or 'Guest'}
+                ]
+            }
+        }
+        
+        resp = requests.post(
+            f'{base_url}/snap/v1.0/qris-mpm-generate',
+            json=payload,
+            headers={
+                'Authorization': f'Bearer {access_token}',
+                'Content-Type': 'application/json',
+                'X-TIMESTAMP': timestamp,
+            },
+            timeout=15
+        )
+        
+        resp_data = resp.json()
+        
+        if resp.status_code == 200 and resp_data.get('responseCode') == '00':
+            qr_content = resp_data.get('qr_content', '')
+            original_ref = resp_data.get('originalReferenceNo', '')
+            
+            # Update payment record
+            if order.payment:
+                order.payment.payment_method = 'qris_bri'
+                order.payment.midtrans_order_id = partner_ref
+                order.payment.midtrans_transaction_id = original_ref
+                order.payment.status = 'pending'
+            else:
+                payment = Payment(
+                    order_id=order.id,
+                    payment_method='qris_bri',
+                    amount=order.total,
+                    status='pending',
+                    midtrans_order_id=partner_ref,
+                    midtrans_transaction_id=original_ref
+                )
+                db.session.add(payment)
+            
+            db.session.commit()
+            
+            # Generate QR image using qrcode library
+            qr_image_url = None
+            try:
+                qr = qrcode.make(qr_content)
+                qr_buffer = BytesIO()
+                qr.save(qr_buffer, format='PNG')
+                qr_buffer.seek(0)
+                qr_image_url = 'data:image/png;base64,' + base64.b64encode(qr_buffer.getvalue()).decode()
+            except Exception:
+                pass
+            
+            return jsonify({
+                'success': True,
+                'qr_content': qr_content,
+                'qr_image': qr_image_url,
+                'partner_ref': partner_ref,
+                'original_ref': original_ref,
+                'amount': order.total
+            })
+        else:
+            return jsonify({
+                'success': False,
+                'error': f"BRI QRIS error: {resp_data.get('responseDesc', resp.text[:200])}"
+            }), 400
+    except Exception as e:
+        return jsonify({'success': False, 'error': f'Error: {str(e)}'}), 500
+
+
+@app.route('/api/payment/qris-bri/status', methods=['POST'])
+@login_required
+def api_check_qris_bri_status():
+    """Check BRI QRIS payment status"""
+    import requests
+    from datetime import timezone
+    
+    data = request.json
+    order_id = data.get('order_id')
+    order = Order.query.get_or_404(order_id)
+    
+    if not order.payment or not order.payment.midtrans_transaction_id:
+        return jsonify({'success': False, 'error': 'No QRIS transaction found'}), 400
+    
+    merchant_id = os.environ.get('BRI_MERCHANT_ID', '')
+    terminal_id = os.environ.get('BRI_TERMINAL_ID', '')
+    is_production = os.environ.get('BRI_IS_PRODUCTION', 'false').lower() == 'true'
+    
+    access_token, err = bri_get_access_token()
+    if not access_token:
+        return jsonify({'success': False, 'error': err}), 400
+    
+    base_url = 'https://partner.api.bri.co.id' if is_production else 'https://sandbox.partner.api.bri.co.id'
+    
+    try:
+        timestamp = datetime.now(timezone.utc).strftime('%Y-%m-%dT%H:%M:%S.000+07:00')
+        
+        resp = requests.post(
+            f'{base_url}/snap/v1.0/qris-mpm-query',
+            json={
+                'originalReferenceNo': order.payment.midtrans_transaction_id,
+                'merchantId': merchant_id,
+                'terminalId': terminal_id,
+            },
+            headers={
+                'Authorization': f'Bearer {access_token}',
+                'Content-Type': 'application/json',
+                'X-TIMESTAMP': timestamp,
+            },
+            timeout=15
+        )
+        
+        resp_data = resp.json()
+        
+        if resp.status_code == 200:
+            # Check if paid - BRI response codes vary
+            bri_status = resp_data.get('latestTransactionStatus', resp_data.get('transactionStatusDesc', ''))
+            is_paid = bri_status.lower() in ('paid', 'settlement', 'success', '00')
+            
+            if is_paid and order.payment.status != 'paid':
+                order.payment.status = 'paid'
+                order.payment.paid_at = utc_now()
+                order.status = 'completed'
+                db.session.commit()
+            
+            return jsonify({
+                'success': True,
+                'status': 'paid' if is_paid else 'pending',
+                'bri_status': bri_status,
+                'details': resp_data
+            })
+        else:
+            return jsonify({'success': False, 'error': f'Status check failed: {resp.text[:200]}'}), 400
+    except Exception as e:
+        return jsonify({'success': False, 'error': str(e)}), 500
+
+
+@app.route('/api/payment-gateway/test-bri', methods=['POST'])
+@login_required
+@role_required('admin')
+def api_test_bri_gateway():
+    """Test BRI QRIS API connection by requesting access token"""
+    token, err = bri_get_access_token()
+    if token:
+        return jsonify({
+            'success': True,
+            'message': f'Koneksi BRI QRIS berhasil! Token diterima.',
+        })
+    else:
+        return jsonify({
+            'success': False,
+            'message': err or 'Gagal mendapatkan token BRI'
         })
 
 
